@@ -2,9 +2,15 @@
   "name": "UniBin-monorepo",
   "private": true,
   "workspaces": ["packages/*"],
-  "scripts": { 
+  "scripts": {
     "build": "bun build",
     "start": "",
     "test": ""
+  },
+  "dependencies": {
+    "leaflet": "^1.9.4"
+  },
+  "devDependencies": {
+    "@types/leaflet": "^1.9.22"
   }
 }
