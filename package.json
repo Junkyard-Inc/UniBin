@@ -1,11 +1,11 @@
 {
-  "name": "UniBin-monorepo",
+  "name": "unibin_monorepo",
   "private": true,
   "workspaces": ["packages/*"],
   "scripts": {
     "build": "bun build",
     "start": "",
-    "test": ""
+    "test": "bun test"
   },
   "dependencies": {
     "leaflet": "^1.9.4"

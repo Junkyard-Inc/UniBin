@@ -11,7 +11,7 @@ export BACKEND_PORT
 
 .DEFAULT_GOAL := help
 
-.PHONY: help dev build frontend-dev backend-dev frontend-build backend-build
+.PHONY: help dev build test frontend-dev backend-dev frontend-build backend-build
 
 help:
 	@printf '%s\n' \
@@ -19,6 +19,7 @@ help:
 		'' \
 		'  make dev              Avvia frontend e backend in development' \
 		'  make build            Costruisce frontend e backend' \
+		'  make test             Esegue i test' \
 		'' \
 		'  make frontend-dev     Avvia solo il frontend' \
 		'  make backend-dev      Avvia solo il backend' \
@@ -30,6 +31,9 @@ dev:
 	$(MAKE) --no-print-directory -j2 frontend-dev backend-dev
 
 build: frontend-build backend-build
+
+test:
+	"$(BUN)" test
 
 frontend-dev:
 	cd "$(FRONTEND_DIR)" && "$(BUN)" run dev
