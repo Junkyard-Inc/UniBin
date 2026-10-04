@@ -22,7 +22,7 @@ const MS_PER_SECOND = 1000;
 const EXPECTED_TIMEOUT_SECONDS = 10;
 const PENDING_GUARD_MS = 2 * MS_PER_SECOND;
 
-const DEFAULT_COORDS = { latitude: 45.4642, longitude: 9.19, accuracy: 20 };
+const DEFAULT_COORDS = { latitude: 45.4642, longitude: 9.19, accuracy: 20, heading: 90 };
 const DEFAULT_POSITION = createPosition(DEFAULT_COORDS);
 
 const originalNavigator = globalThis.navigator;
@@ -45,8 +45,8 @@ function createPosition(coords: MutableCoords, timestamp = 1_700_000_000_000): G
     speed: null,
     ...coords,
   };
-  // Il cast serve perché i tipi di lib.dom vietano null su accuracy, mentre i browser
-  // reali possono restituirlo: il fake deve poter modellare entrambi i casi.
+  // Il cast serve perché MutableCoords è un tipo parziale (i campi non impostati
+  // restano undefined) e non include toJSON, che va aggiunto a mano.
   const fullCoords = { ...base, toJSON: () => base } as unknown as GeolocationCoordinates;
   return {
     coords: fullCoords,
@@ -194,12 +194,12 @@ describe("getUserLocation con geolocation supportata", () => {
     ["nord ovest", 90, -180],
     ["sud est", -90, 180],
     ["valori decimali", 48.2081767, 16.3738189],
-  ])("risolve con latitude e longitude per %s", async (_label, latitude, longitude) => {
+  ])("risolve con i campi di UserCoordinates per %s", async (_label, latitude, longitude) => {
     getCurrentPosition.mockImplementationOnce((success) => {
-      success(createPosition({ latitude, longitude, accuracy: 12 }));
+      success(createPosition({ latitude, longitude, accuracy: 12, heading: 42 }));
     });
 
-    await expect(getUserLocation()).resolves.toEqual({ latitude, longitude, accuracy: 12 });
+    await expect(getUserLocation()).resolves.toEqual({ latitude, longitude, accuracy: 12, heading: 42 });
   });
 
   test("non risolve prima che la callback di successo venga invocata", async () => {
@@ -215,13 +215,13 @@ describe("getUserLocation con geolocation supportata", () => {
     await flush();
     expect(resolved).toBe(false);
 
-    callAt(0).success(createPosition({ latitude: 10, longitude: 20, accuracy: 30 }));
+    callAt(0).success(createPosition({ latitude: 10, longitude: 20, accuracy: 30, heading: 15 }));
 
-    await expect(settle(pending)).resolves.toEqual({ latitude: 10, longitude: 20, accuracy: 30 });
+    await expect(settle(pending)).resolves.toEqual({ latitude: 10, longitude: 20, accuracy: 30, heading: 15 });
     expect(resolved).toBe(true);
   });
 
-  test("estrae solo i tre campi di UserCoordinates, ignorando il resto di coords", async () => {
+  test("estrae solo i campi di UserCoordinates, ignorando il resto di coords", async () => {
     getCurrentPosition.mockImplementationOnce((success) => {
       success(
         createPosition({
@@ -236,21 +236,39 @@ describe("getUserLocation con geolocation supportata", () => {
       );
     });
 
-    await expect(getUserLocation()).resolves.toEqual({
+    const coords = await settle(getUserLocation());
+
+    expect(coords).toEqual({
       latitude: 41.9028,
       longitude: 12.4964,
       accuracy: 8.4,
+      heading: 180,
     });
+    // Le quattro chiavi di UserCoordinates sono le uniche presenti: altitude,
+    // altitudeAccuracy e speed non devono trapelare nel risultato.
+    expect(Object.keys(coords).sort()).toEqual(["accuracy", "heading", "latitude", "longitude"]);
   });
 
   test("il valore risolto è utilizzabile come UserCoordinates", async () => {
     getCurrentPosition.mockImplementationOnce((success) => {
-      success(createPosition({ latitude: 1, longitude: 2, accuracy: 3 }));
+      success(createPosition({ latitude: 1, longitude: 2, accuracy: 3, heading: 180 }));
     });
 
     const coords: UserCoordinates = await settle(getUserLocation());
 
-    expect(coords).toEqual({ latitude: 1, longitude: 2, accuracy: 3 });
+    expect(coords).toEqual({ latitude: 1, longitude: 2, accuracy: 3, heading: 180 });
+  });
+
+  test("il tipo UserCoordinates ammette heading sia numerico sia null", () => {
+    // La compilazione di questo test garantisce che heading resti un campo
+    // obbligatorio con valore nullable, quindi i consumer possono fare
+    // `if (coords.heading !== null)` senza narrowing implicito.
+    const esempi: UserCoordinates[] = [
+      { latitude: 1, longitude: 2, accuracy: 3, heading: 90 },
+      { latitude: 1, longitude: 2, accuracy: 3, heading: null },
+    ];
+
+    expect(esempi.map((coords) => coords.heading)).toEqual([90, null]);
   });
 
   test("risolve con un solo valore per chiamata", async () => {
@@ -263,6 +281,8 @@ describe("getUserLocation con geolocation supportata", () => {
 /* -------------------------------------------------------------------------- */
 
 describe("accuratezza della posizione", () => {
+  // accuracy è non-nullable in UserCoordinates: il servizio la propaga grezza,
+  // quindi i casi null/undefined non sono rappresentabili e non vengono testati.
   test.each([
     ["decimale", 12.5],
     ["intero", 8],
@@ -271,39 +291,75 @@ describe("accuratezza della posizione", () => {
     ["molto grande", 1_000_000],
   ])("propaga accuracy %s senza alterarla", async (_label, accuracy) => {
     getCurrentPosition.mockImplementationOnce((success) => {
+      // heading assente nella posizione: il risultato deve riportarlo come null
+      // senza compromettere la risoluzione.
       success(createPosition({ latitude: 45.4642, longitude: 9.19, accuracy }));
     });
 
-    await expect(getUserLocation()).resolves.toEqual({ latitude: 45.4642, longitude: 9.19, accuracy });
-  });
-
-  test("propaga accuracy null come null", async () => {
-    getCurrentPosition.mockImplementationOnce((success) => {
-      success(createPosition({ latitude: 1, longitude: 2, accuracy: null }));
+    await expect(getUserLocation()).resolves.toEqual({
+      latitude: 45.4642,
+      longitude: 9.19,
+      accuracy,
+      heading: null,
     });
-
-    const coords = await settle(getUserLocation());
-
-    expect(coords.accuracy).toBeNull();
-    expect(coords.latitude).toBe(1);
-    expect(coords.longitude).toBe(2);
-  });
-
-  test("propaga accuracy assente come undefined senza lanciare eccezioni", async () => {
-    getCurrentPosition.mockImplementationOnce((success) => {
-      success(createPosition({ latitude: 1, longitude: 2, accuracy: undefined }));
-    });
-
-    const coords = await settle(getUserLocation());
-
-    expect(coords.accuracy).toBeUndefined();
-    expect(coords.latitude).toBe(1);
-    expect(coords.longitude).toBe(2);
   });
 });
 
 /* -------------------------------------------------------------------------- */
-/* 4. errori                                                                   */
+/* 4. heading                                                                  */
+/* -------------------------------------------------------------------------- */
+
+describe("orientamento della posizione", () => {
+  test.each([
+    ["90 (est)", 90],
+    ["180 (sud)", 180],
+    ["359.9", 359.9],
+    ["360", 360],
+    ["370, fuori range", 370],
+  ])("propaga heading %s senza alterarlo", async (_label, heading) => {
+    getCurrentPosition.mockImplementationOnce((success) => {
+      success(createPosition({ latitude: 45.4642, longitude: 9.19, accuracy: 20, heading }));
+    });
+
+    await expect(getUserLocation()).resolves.toEqual({
+      latitude: 45.4642,
+      longitude: 9.19,
+      accuracy: 20,
+      heading,
+    });
+  });
+
+  test("propaga heading 0 (nord) come 0, non come assente", async () => {
+    // 0 è un orientamento valido: non deve essere trattato come valore falsy.
+    getCurrentPosition.mockImplementationOnce((success) => {
+      success(createPosition({ latitude: 45.4642, longitude: 9.19, accuracy: 20, heading: 0 }));
+    });
+
+    const coords = await settle(getUserLocation());
+
+    expect(coords.heading).toBe(0);
+    expect(coords.latitude).toBe(45.4642);
+    expect(coords.longitude).toBe(9.19);
+    expect(coords.accuracy).toBe(20);
+  });
+
+  test("propaga heading null come null mantenendo gli altri campi", async () => {
+    // Il device non ha bussola: heading è null, ma la posizione è comunque valida.
+    getCurrentPosition.mockImplementationOnce((success) => {
+      success(createPosition({ latitude: 1, longitude: 2, accuracy: 3, heading: null }));
+    });
+
+    const coords = await settle(getUserLocation());
+
+    expect(coords.heading).toBeNull();
+    expect(coords.latitude).toBe(1);
+    expect(coords.longitude).toBe(2);
+    expect(coords.accuracy).toBe(3);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* 5. errori                                                                   */
 /* -------------------------------------------------------------------------- */
 
 describe("getCurrentPosition in errore", () => {
@@ -363,7 +419,7 @@ describe("getCurrentPosition in errore", () => {
 });
 
 /* -------------------------------------------------------------------------- */
-/* 5. timeout di 10 secondi                                                   */
+/* 6. timeout di 10 secondi                                                   */
 /* -------------------------------------------------------------------------- */
 
 describe("configurazione del timeout", () => {
@@ -399,19 +455,19 @@ describe("configurazione del timeout", () => {
 });
 
 /* -------------------------------------------------------------------------- */
-/* 6. indipendenza tra chiamate                                                 */
+/* 7. indipendenza tra chiamate                                                 */
 /* -------------------------------------------------------------------------- */
 
 describe("indipendenza tra chiamate", () => {
   test("due chiamate concorrenti usano due implementazioni separate", async () => {
     getCurrentPosition
-      .mockImplementationOnce((success) => success(createPosition({ latitude: 1, longitude: 2, accuracy: 3 })))
-      .mockImplementationOnce((success) => success(createPosition({ latitude: 4, longitude: 5, accuracy: 6 })));
+      .mockImplementationOnce((success) => success(createPosition({ latitude: 1, longitude: 2, accuracy: 3, heading: 45 })))
+      .mockImplementationOnce((success) => success(createPosition({ latitude: 4, longitude: 5, accuracy: 6, heading: 200 })));
 
     const [first, second] = await Promise.all([settle(getUserLocation()), settle(getUserLocation())]);
 
-    expect(first).toEqual({ latitude: 1, longitude: 2, accuracy: 3 });
-    expect(second).toEqual({ latitude: 4, longitude: 5, accuracy: 6 });
+    expect(first).toEqual({ latitude: 1, longitude: 2, accuracy: 3, heading: 45 });
+    expect(second).toEqual({ latitude: 4, longitude: 5, accuracy: 6, heading: 200 });
     expect(getCurrentPosition).toHaveBeenCalledTimes(2);
   });
 

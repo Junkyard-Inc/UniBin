@@ -2,6 +2,7 @@ export interface UserCoordinates {
     latitude: number;
     longitude: number;
     accuracy: number;
+    heading: number | null;
 }
 
 export async function getUserLocation(): Promise<UserCoordinates> {
@@ -16,12 +17,13 @@ export async function getUserLocation(): Promise<UserCoordinates> {
       // Callback 
       (position) => {
         
-        const { latitude, longitude, accuracy } = position.coords;
+        const { latitude, longitude, accuracy, heading } = position.coords;
 
         resolve({
           latitude,
           longitude,
-          accuracy
+          accuracy,
+          heading,
         });
       },
       // Error Callback 
