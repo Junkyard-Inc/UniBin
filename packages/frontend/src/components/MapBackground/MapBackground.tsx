@@ -1,36 +1,68 @@
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import "./MapBackground.css";
+import { getUserLocation, type UserCoordinates } from "../../services/location";
 
 export function MapBackground() {
-  // 1. Creiamo un riferimento per il div che conterrà la mappa
+
   const mapContainerRef = useRef<HTMLDivElement>(null);
-  
-  // 2. Creiamo un riferimento per l'istanza della mappa (utile per evitare doppie inizializzazioni in Strict Mode)
   const mapRef = useRef<L.Map | null>(null);
 
+  const [ location, setLocation ] = useState<UserCoordinates | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+
   useEffect(() => {
-    // 3. Assicuriamoci che il div esista e che la mappa non sia già stata inizializzata
-    if (mapContainerRef.current && !mapRef.current) {
+    async function fetchLocation() {
+      try {
+        setLoading(true);
+        // Attende la risoluzione della Promise
+        const coords = await getUserLocation();
+        setLocation(coords);
+      } catch (err) {
+        console.error("Errore geolocalizzazione:", err);
+        setError("Impossibile accedere alla posizione. Verifica i permessi GPS.");
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    fetchLocation();
+  }, []);
+
+  useEffect(() => {
+
+    if (!location || !mapContainerRef.current ) return;
+    if (!mapRef.current) {
       
       // Inizializziamo la mappa passandogli il riferimento (current) invece della stringa 'map'
-      mapRef.current = L.map(mapContainerRef.current, {zoomControl: false}  ).setView([44.801, 10.3280], 14);
-
+      const map = L.map(mapContainerRef.current, {zoomControl: false}  ).setView([location.latitude, location.longitude], 15);
+  
       L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
         maxZoom: 19,
         attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-      }).addTo(mapRef.current);
+      }).addTo(map);
+
+      L.marker([location.latitude, location.longitude])
+        .addTo(map)
+        .bindPopup("<b>Sei qui.</b>")
+        .openPopup();
+      
+      mapRef.current = map;
     }
 
-    // 4. Funzione di cleanup: distrugge la mappa se il componente viene smontato
-    return () => {
-      if (mapRef.current) {
-        mapRef.current.remove();
-        mapRef.current = null;
-      }
-    };
-  }, []); // L'array vuoto significa: esegui questo effetto solo al montaggio del componente
+  }, [location]);
+  
+
+  if (loading) {
+    return <div className="map-loading">Ricerca posizione GPS in corso...</div>;
+  }
+
+  if (error) {
+    return <div className="map-error">{error}</div>;
+  }
+  
 
   return <div ref={mapContainerRef} className="mapContainer"></div>;
 }
