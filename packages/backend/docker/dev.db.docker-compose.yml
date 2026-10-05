@@ -1,0 +1,23 @@
+name: unibin
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: unibin-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PW:-postgres}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+volumes:
+  # It makes sure to not lose data after the container restart
+  pgdata:

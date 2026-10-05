@@ -2,9 +2,10 @@
   "name": "unibin_monorepo",
   "private": true,
   "workspaces": ["packages/*"],
-  "scripts": { 
+  "scripts": {
     "build": "bun build",
     "start": "",
-    "test": "bun test"
+    "test": "bun test",
+    "dev:backend": "bun run --cwd packages/backend dev"
   }
 }

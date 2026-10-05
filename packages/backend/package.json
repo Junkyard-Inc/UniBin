@@ -4,9 +4,12 @@
   "type": "module",
   "private": true,
   "scripts": {
+    "db:setup": "bun --env-file=../../.env run scripts/db-setup.ts",
+    "db:stop": "docker compose -f docker/dev.db.docker-compose.yml --env-file ../../.env stop db",
+    "db:reset": "docker compose -f docker/dev.db.docker-compose.yml --env-file ../../.env down -v && bun run db:setup",
+    "dev": "bun run db:setup && bun --env-file=../../.env --hot index.ts",
     "build": "bun build index.ts --outdir dist --target bun",
-    "start": "bun run index.ts",
-    "dev": "bun --watch run index.ts"
+    "start": "bun --env-file=../../.env run dist/index.js"
   },
   "devDependencies": {
     "@types/bun": "^1.4.2",
