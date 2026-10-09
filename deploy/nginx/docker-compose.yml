@@ -1,0 +1,14 @@
+name: unibin
+
+services:
+  nginx:
+    image: nginx:alpine
+    container_name: unibin-nginx
+    restart: unless-stopped
+    # host networking: nginx ascolta direttamente sulla 443 dell'host e
+    # raggiunge frontend/backend su 127.0.0.1, senza porte pubblicate da
+    # Docker (così firewalld applica normalmente le regole sull'input).
+    network_mode: host
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro,z
+      - ../../certs:/etc/nginx/certs:ro,z

@@ -27,6 +27,9 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 .cache
 *.tsbuildinfo
 
+# TLS certificates (CA + leaf generate da scripts/gen-certs.sh)
+certs/
+
 # IntelliJ based IDEs
 .idea
 
