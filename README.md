@@ -17,6 +17,7 @@ A simple yet useful web application for finding trash bins across the universe
 ### Maps
 
 - OpenstreetMap and MapTiler for maop management.
+- Another library to render maps on JavaScript is [Leaflet](https://leafletjs.com/)
 - Find another manager for geographic coordinates. (epsg.io)
 
 ## Functionality
