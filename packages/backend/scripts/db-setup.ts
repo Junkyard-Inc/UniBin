@@ -75,7 +75,7 @@ const schema = `
   CREATE TABLE IF NOT EXISTS trash_user(
     user_id SERIAL PRIMARY KEY,
     email TEXT NOT NULL,
-    username  TEXT NOT NULL,
+    username  TEXT NOT NULL UNIQUE,
     password  TEXT NOT NULL,
     profile_picture TEXT,
     rank  INT NOT NULL,
