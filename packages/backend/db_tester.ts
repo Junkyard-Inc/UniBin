@@ -157,8 +157,16 @@ export async function getNearBinsPosition(usr_long: number, usr_lat: number, rad
   `;
 }
 
+// This function updates the bin state based off of the recent bin reviews
+export async function updateBinState() {
+  // !! Evaluate if it is better to remove state from the trashbin table and use only bin_review
+}
+
+// This function must remove a bin from the db if the latest reported state is
 export async function removeBin(bin_long: number, bin_lat: number) {
-  // This function must remove a bin from the db based off of certain criteria
+  const [bin_check] = await connection`
+    SELECT bin_id,
+  `;
 }
 
 export async function getUserInfo() {
@@ -166,12 +174,98 @@ export async function getUserInfo() {
 }
 
 // This function must let a new user registr to the site
+//  First we check if the username already exists
+//  Then we check if the email is correct
+//  Then we check the password and if it respects the criteria we hash it
 export async function registerNewUser(email: string, username: string, password: string) {
-  const hash = await Bun.password.hash(password); // argon2id by default
-  // First we check if the username already exists
-  // Then we check if the email is correct
-  // Then we check the password and if it respects the criteria we hash it
-  //
+  let em_flag = false; // if email is already in use =true
+  let usr_flag = false; // if username already in use =true
+  let pw_len_flag = false; // if password is too short =true
+  let pw_num_flag = false; // if password does not contain any number =true
+  let pw_spec_flag = false; // if password does not contain any special character =true
+  let advice = "";
+
+  // This removes spaces and anything that is NOT a letter, number, @, ., -, or _
+  const clean_email = email.replace(/[^a-zA-Z0-9@._-]/g, '');
+
+  const [email_check] = await connection`
+    SELECT user_id
+    FROM trash_user
+    WHERE email=${clean_email}
+  `;
+
+  if (email_check.length !== 0) {
+    em_flag = true;
+  }
+
+  const [usr_check] = await connection`
+    SELECT user_id
+    FROM trash_user
+    WHERE username=${username}
+  `;
+
+  if (usr_check.length !== 0) {
+    usr_flag = true;
+  }
+
+
+  if (password.length < 8) {
+    pw_len_flag = true;
+  }
+
+  // This checks if the password contanins numbers
+  if (!/\d/.test(password)) {
+    pw_num_flag = true;
+  }
+
+  // This checks if the password contanins special characters
+  if (!/[!?.,;:_-£$%€@#*]/.test(password)) {
+    pw_spec_flag = true;
+  }
+
+  if (!em_flag && !usr_flag && !pw_len_flag && !pw_num_flag && !pw_spec_flag) {
+    const hash = await Bun.password.hash(password); // argon2id by default
+    try {
+      const [query] = await connection`
+        INSERT INTO trash_user (email, username, password, rank, role, new_bins_reported_today, bins_reported_today, users_reviewed_today, date_of_activation)
+        SELECT
+          ${email}::TEXT,
+          ${username}::TEXT,
+          ${hash}::TEXT,
+          (SELECT rank_id FROM user_rank WHERE rank_name='Monnezzaro Jr'),
+          (SELECT role_id FROM user_role WHERE role='Registered User'),
+          (SELECT daily_new_bins_report FROM user_rank WHERE rank_name='Monnezzaro Jr'),
+          (SELECT daily_bins_report FROM user_rank WHERE rank_name='Monnezzaro Jr'),
+          (SELECT daily_users_review FROM user_rank WHERE rank_name='Monnezzaro Jr'),
+          CURRENT_DATE()
+        RETURNING user_id
+      `;
+      if (query.length === 0) {
+        throw new Error("Nothing was inserted");
+      }
+      advice = "User added successfully!";
+    } catch (e) {
+      advice = "Something went wrong";
+    }
+    return advice;
+  } else {
+    if (em_flag) {
+      advice = advice + "email already in use|";
+    }
+    if (usr_flag) {
+      advice = advice + "username already in use|";
+    }
+    if (pw_len_flag) {
+      advice = advice + "password too short|";
+    }
+    if (pw_num_flag) {
+      advice = advice + "password must contain at least one number|";
+    }
+    if (pw_spec_flag) {
+      advice = advice + "password must contain at least one special character|";
+    }
+  }
+  return advice;
 }
 
 // This function must let an already registered user to login
@@ -195,8 +289,10 @@ export async function userLogin(username: string, password: string) {
 
 // This function must periodically check what time it is and then reset all the users usage data for the day at a given time (daily)
 export async function resetDailyUserData() {
-  // This could be done in two ways: checking a given arbitrary time server-side and reset all the users at the same time
-  // Otherwise, we could add a time-zone to user entity and reset everytime a certain time-zone reaches midnight
+  // This could be done in three ways:
+  // 1. checking a given arbitrary time server-side and reset all the users at the same time
+  // 2. we could add a time-zone to user entity and reset everytime a certain time-zone reaches midnight
+  // 3. we could execute the reset everytime the user does something while also checking the date
 }
 
 export async function computeUserRank() {
