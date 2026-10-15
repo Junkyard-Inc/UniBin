@@ -3,7 +3,7 @@ import { connection } from '.';
 //PAY ATTENTION to SQL Injections!!!
 
 // This function must check the user's daily limits then it should let the user insert the record into the db
-export async function reportNewBin(longitude: number, latitude: number, type: string, state: string, reporting_user: string) {
+export async function reportNewBin(longitude: number, latitude: number, state: string, type: string, reporting_user: string) {
   const [check] = await connection`
     SELECT new_bins_reported_today
     FROM trash_user
@@ -17,18 +17,22 @@ export async function reportNewBin(longitude: number, latitude: number, type: st
   else {
     try
     {
-      const [query] = await connection`
-        INSERT INTO trashbin (location, type, state, reporting_user)
+      const [newBinQuery] = await connection`
+        INSERT INTO trashbin (location, type, status, reporting_user)
         SELECT
           ST_SetSRID(ST_MakePoint(${longitude}, ${latitude}), 4326)::geography,
           (SELECT type_id FROM bin_type WHERE type=${type}),
-          (SELECT state_id FROM bin_state WHERE state=${state}),
+          (SELECT status_id FROM bin_status WHERE status='Active'),
           (SELECT user_id FROM trash_user WHERE username=${reporting_user})
         RETURNING bin_id, created_at
       `;
       // In this case the field created_at is not inserted manually cause in the schema the field is set to DEFAULT now()
-      if (query.length === 0) {
+      if (newBinQuery.length === 0) {
         throw new Error("Nothing was inserted");
+      }
+      const newBinRev = await reviewBin(longitude, latitude, type, reporting_user, state);
+      if (newBinRev === "Something went wrong") {
+        throw new Error("Review was not inserted");
       }
       await connection`
         UPDATE trash_user
@@ -45,8 +49,12 @@ export async function reportNewBin(longitude: number, latitude: number, type: st
   return advice;
 }
 
+export async function reportGroupOfBins(longitude: number, latitude: number, states: string[], types: string[], reporting_user: string) {
+  // This function lets a user report multiple bins in the same position
+}
+
 // This function must check first the user's daily limits, second if the user is near the bin and then if that is true it should insert the record into the db
-export async function reviewBin(bin_long: number, bin_lat: number, reviewing_user: string, reported_state: string) {
+export async function reviewBin(bin_long: number, bin_lat: number, type:string, reviewing_user: string, reported_state: string) {
   const [check] = await connection`
     SELECT bins_reported_today
     FROM trash_user
@@ -158,14 +166,50 @@ export async function getNearBinsPosition(usr_long: number, usr_lat: number, rad
 }
 
 // This function updates the bin state based off of the recent bin reviews
-export async function updateBinState() {
+export async function updateBinState(bin_long: number, bin_lat: number, type: number) {
   // !! Evaluate if it is better to remove state from the trashbin table and use only bin_review
+  // This query gets the latest review of a given trashbin
+  const [rev_bin] = await connection`
+    WITH selected_bin AS (
+      SELECT bn.bin_id
+      FROM trashbin bn
+      JOIN bin_type bt ON bt.type_id = bn.type
+      WHERE bt.type = ${type} AND ST_DWithin(
+        bn.location,
+        ST_SetSRID(ST_MakePoint(${bin_long}, ${bin_lat}), 4326)::geography,
+        1
+      ) -- Gets all the bins in that position and in a radius of one meter
+      ORDER BY b.location <-> ST_SetSRID(ST_MakePoint(${bin_long}, ${bin_lat}), 4326)::geography -- Operand <-> returns the distance between two spatial values
+      LIMIT 1
+    )
+    SELECT br.reviewed_bin, bs.state_id, bs.state, br.reviewed_at, (br.reviewed_at < now() - INTERVAL '30 days') AS is_stale
+    FROM bin_review br
+    JOIN selected_bin sb ON sb.bin_id = br.reviewed_bin
+    JOIN bin_state bs ON bs.state_id = br.reported_state
+    ORDER BY br.reviewed_at DESC
+    LIMIT 1
+  `;
+  // is_stale is used to check if the review the query found is older than 30 days
+  if (!rev_bin) {
+    return "An error has occured";
+  } else if (rev_bin.is_stale && rev_bin.state === "Removed") {
+    try {
+      await connection`
+        UPDATE trashbin
+        SET status = (SELECT ststus_id FROM bin_status WHERE status='Removed')
+        WHERE bin_id = ${rev_bin.reviewed_bin}
+      `;
+      return "Removal successful";
+    } catch (e) {
+      return "Removall unsuccessful";
+    }
+  }
 }
 
 // This function must remove a bin from the db if the latest reported state is
-export async function removeBin(bin_long: number, bin_lat: number) {
+export async function removeBin(bin_long: number, bin_lat: number, type: string) {
   const [bin_check] = await connection`
-    SELECT bin_id,
+    SELECT reviewBin, reported_state
   `;
 }
 
