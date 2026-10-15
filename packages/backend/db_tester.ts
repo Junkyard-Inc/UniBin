@@ -173,7 +173,7 @@ export async function getUserInfo() {
   // This function must get the various public info for a given user
 }
 
-// This function must let a new user registr to the site
+// This function must let a new user register to the site
 //  First we check if the username already exists
 //  Then we check if the email is correct
 //  Then we check the password and if it respects the criteria we hash it
@@ -276,13 +276,13 @@ export async function userLogin(username: string, password: string) {
     WHERE username=${username}
   `;
   if (query.length === 0) {
-    return "Auth failed";
+    return "No such username";
   } else {
     const pw_ok = await Bun.password.verify(password, query.password); // true / false
     if (pw_ok) {
       return "Auth successfull";
     } else {
-      return "Auth failed"
+      return "Incorrect password"
     }
   }
 }

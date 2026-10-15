@@ -14,6 +14,7 @@ const DB_HOST = process.env.DB_HOST ?? "127.0.0.1";
 
 const binTypes: readonly string[] = ["General Waste", "Food Waste", "Plastic", "Paper", "Glass", "Clothing", "Green Waste", "Stale Oil", "Batteries", "Cigarette Butts"];
 const binStates: readonly string[] = ["Full", "Empty", "Broken", "Removed", "Aflame"];
+const binStatus: readonly string[] = ["Active", "Removed", "Removed by Admin"]
 const userRanks: readonly string[] = ["Re Dei Monnezzari", "Monnezzaro", "Monnezzaro Jr", "Troll Delle Discariche", "Rifiuto Della Società"]
 const userRoles: readonly string[] = ["Admin", "Registered User"]
 
@@ -107,22 +108,29 @@ const schema = `
     type  TEXT NOT NULL UNIQUE
   );
 
+  -- State describes the current state of the trashbin (used in reviews)
   CREATE TABLE IF NOT EXISTS bin_state(
     state_id  SERIAL PRIMARY KEY,
     state TEXT NOT NULL UNIQUE
+  );
+
+  -- Status describes the current status of the trashbin (active, removed, ecc.)
+  CREATE TABLE IF NOT EXISTS bin_status(
+    status_id SERIAL PRIMARY KEY,
+    status TEXT NOT NULL UNIQUE
   );
 
   CREATE TABLE IF NOT EXISTS trashbin(
     bin_id SERIAL PRIMARY KEY,
     location  GEOGRAPHY(Point, 4326) NOT NULL, -- First longitude then latitude
     type INT NOT NULL,
-    state INT NOT NULL,
+    status INT NOT NULL,
     reporting_user INT NOT NULL,
     general_info TEXT,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
 
     FOREIGN KEY (type) REFERENCES bin_type(type_id),
-    FOREIGN KEY (state) REFERENCES bin_state(state_id),
+    FOREIGN KEY (status) REFERENCES bin_status(status_id),
     FOREIGN KEY (reporting_user) REFERENCES trash_user(user_id)
   );
 
@@ -159,6 +167,14 @@ for (const value of binStates) {
     INSERT INTO bin_state (state)
     VALUES (${value})
     ON CONFLICT (state) DO NOTHING
+    `;
+}
+
+for (const value of binStatus) {
+  await connection`
+    INSERT INTO bin_status (status)
+    VALUES (${value})
+    ON CONFLICT (status) DO NOTHING
     `;
 }
 
