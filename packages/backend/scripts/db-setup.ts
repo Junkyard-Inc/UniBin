@@ -14,7 +14,7 @@ const DB_HOST = process.env.DB_HOST ?? "127.0.0.1";
 
 const binTypes: readonly string[] = ["General Waste", "Food Waste", "Plastic", "Paper", "Glass", "Clothing", "Green Waste", "Stale Oil", "Batteries", "Cigarette Butts"];
 const binStates: readonly string[] = ["Full", "Empty", "Broken", "Removed", "Aflame"];
-const binStatus: readonly string[] = ["Active", "Removed", "Removed by Admin"]
+const binStatus: readonly string[] = ["Active", "Inactive", "Removed by Admin"]
 const userRanks: readonly string[] = ["Re Dei Monnezzari", "Monnezzaro", "Monnezzaro Jr", "Troll Delle Discariche", "Rifiuto Della Società"]
 const userRoles: readonly string[] = ["Admin", "Registered User"]
 
@@ -139,6 +139,14 @@ const schema = `
     reviewed_bin  INT NOT NULL,
     reviewing_user  INT NOT NULL,
     reported_state  INT NOT NULL,
+    useful  INT NOT NULL DEFAULT 1,
+    not_useful  INT NOT NULL DEFAULT 1,
+    reliable BOOLEAN GENERATED ALWAYS AS(
+      CASE
+        WHEN ((useful/(useful+not_useful))*100) >= 50 THEN true
+        ELSE false
+      END
+    ) STORED,
     reviewed_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
 
     FOREIGN KEY (reviewed_bin) REFERENCES trashbin(bin_id),

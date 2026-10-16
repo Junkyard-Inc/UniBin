@@ -1,9 +1,10 @@
 import { connection } from '.';
 
-//PAY ATTENTION to SQL Injections!!!
+//WARN: PAY ATTENTION to SQL Injections
 
 // This function must check the user's daily limits then it should let the user insert the record into the db
 export async function reportNewBin(longitude: number, latitude: number, state: string, type: string, reporting_user: string) {
+  //WARN: Check first if the bin is already in the db with status "Inactive"
   const [check] = await connection`
     SELECT new_bins_reported_today
     FROM trash_user
@@ -167,6 +168,11 @@ export async function getNearBinsPosition(usr_long: number, usr_lat: number, rad
 
 // This function updates the bin state based off of the recent bin reviews
 export async function updateBinState(bin_long: number, bin_lat: number, type: number) {
+  // Is it really necessary?
+}
+
+// This function must "remove" a bin from the db if the latest reported state is
+export async function removeBin(bin_long: number, bin_lat: number, type: string) {
   // !! Evaluate if it is better to remove state from the trashbin table and use only bin_review
   // This query gets the latest review of a given trashbin
   const [rev_bin] = await connection`
@@ -182,7 +188,7 @@ export async function updateBinState(bin_long: number, bin_lat: number, type: nu
       ORDER BY b.location <-> ST_SetSRID(ST_MakePoint(${bin_long}, ${bin_lat}), 4326)::geography -- Operand <-> returns the distance between two spatial values
       LIMIT 1
     )
-    SELECT br.reviewed_bin, bs.state_id, bs.state, br.reviewed_at, (br.reviewed_at < now() - INTERVAL '30 days') AS is_stale
+    SELECT br.reviewed_bin, br.reliable, bs.state_id, bs.state, br.reviewed_at, (br.reviewed_at < now() - INTERVAL '30 days') AS is_stale
     FROM bin_review br
     JOIN selected_bin sb ON sb.bin_id = br.reviewed_bin
     JOIN bin_state bs ON bs.state_id = br.reported_state
@@ -192,11 +198,11 @@ export async function updateBinState(bin_long: number, bin_lat: number, type: nu
   // is_stale is used to check if the review the query found is older than 30 days
   if (!rev_bin) {
     return "An error has occured";
-  } else if (rev_bin.is_stale && rev_bin.state === "Removed") {
+  } else if (rev_bin.is_stale && rev_bin.state === "Removed" && rev_bin.reliable) {
     try {
       await connection`
         UPDATE trashbin
-        SET status = (SELECT ststus_id FROM bin_status WHERE status='Removed')
+        SET status = (SELECT ststus_id FROM bin_status WHERE status='Inactive')
         WHERE bin_id = ${rev_bin.reviewed_bin}
       `;
       return "Removal successful";
@@ -204,13 +210,6 @@ export async function updateBinState(bin_long: number, bin_lat: number, type: nu
       return "Removall unsuccessful";
     }
   }
-}
-
-// This function must remove a bin from the db if the latest reported state is
-export async function removeBin(bin_long: number, bin_lat: number, type: string) {
-  const [bin_check] = await connection`
-    SELECT reviewBin, reported_state
-  `;
 }
 
 export async function getUserInfo() {
@@ -339,9 +338,15 @@ export async function resetDailyUserData() {
   // 3. we could execute the reset everytime the user does something while also checking the date
 }
 
+// This function must calculate a user's rank based off of certain criteria
+// This function is called when a user gets reviewed or when a bin bin review by the same user gets a feedback
 export async function computeUserRank() {
-  // This function must calculate a user's rank based off of certain criteria
-  // This function should be called when a user gets reviewed or when a bin gets deleted due to reasons
+  // What is evaluated:
+  // (N of reported bins still active/N of total reported bins)*100
+  // (N of unreliable bins reviews/N of total bins review)*100
+  // user "seniority"
+  // average vote across all of user's review that the user received (percent)
+  // numbers of users reviewed
 }
 
 export async function serverRequestsThrottling() {
