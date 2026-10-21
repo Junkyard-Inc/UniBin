@@ -36,7 +36,7 @@ html, body, #root {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  padding: 20px;
+  padding: 12px;
   box-sizing: border-box;
 }
 
@@ -46,11 +46,11 @@ html, body, #root {
 
 /* Stili di esempio per l'interfaccia sopra */
 .top-bar {
-  background: rgba(33, 189, 241, 0.384);
+  background: #21bdf162;
   backdrop-filter: blur(8px);
-  padding: 12px 24px;
+  padding-left: 24px;
   border-radius: 12px;
-  box-shadow: 0 4px 12px rgba(6, 60, 63, 0.612);
+  box-shadow: 0 4px 12px #063c3f9c;
   display: flex;
   justify-content: space-between;
   align-items: center;  
@@ -58,4 +58,16 @@ html, body, #root {
   h1 {
     color: rgb(0, 129, 47);
   }
+}
+
+.bitcount-logo {
+  font-family: "Bitcount", system-ui;
+  font-optical-sizing: auto;
+  font-weight: 400;
+  font-style: normal;
+  font-variation-settings:
+    "slnt" 0,
+    "CRSV" 0.5,
+    "ELSH" 0,
+    "ELXP" 0;
 }

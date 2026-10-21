@@ -1,68 +1,86 @@
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import "./MapBackground.css";
-import { getUserLocation, type UserCoordinates } from "../../services/location";
+import { type UserCoordinates } from "../../services/location";
 
-export function MapBackground() {
+delete (L.Icon.Default.prototype as unknown as { _getIconUrl?: unknown })._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png",
+  iconUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png",
+  shadowUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png",
+});
+
+interface MapBackgroundProps {
+  center: [number, number];
+  userLocation: UserCoordinates | null;
+  onMapReady?: (map: L.Map) => void; // Restituisce l'istanza della mappa ad App.tsx
+  onMapDrag?: () => void;            // Avvisa App.tsx se l'utente sposta la mappa
+}
+
+export function MapBackground({center, userLocation, onMapReady, onMapDrag}: MapBackgroundProps) {
 
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
+  const markerRef = useRef<L.CircleMarker | null>(null);
 
-  const [ location, setLocation ] = useState<UserCoordinates | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
 
+  // 1. effect used to first create the map layer
   useEffect(() => {
-    async function fetchLocation() {
-      try {
-        setLoading(true);
-        // Attende la risoluzione della Promise
-        const coords = await getUserLocation();
-        setLocation(coords);
-      } catch (err) {
-        console.error("Errore geolocalizzazione:", err);
-        setError("Impossibile accedere alla posizione. Verifica i permessi GPS.");
-      } finally {
-        setLoading(false);
-      }
+
+    if (mapRef.current || !mapContainerRef.current ) return;
+      
+    // Inizializziamo la mappa passandogli il riferimento (current) invece della stringa 'map'
+    const map = L.map(mapContainerRef.current, {zoomControl: false}  ).setView(
+      center,
+      15
+    );
+
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+    }).addTo(map);
+
+    map.on("dragstart", () => {
+      if (onMapDrag) onMapDrag();
+    });
+    
+    mapRef.current = map;
+
+    if (onMapReady) {
+      onMapReady(map);
     }
 
-    fetchLocation();
+    return () => {
+        map.remove();
+        mapRef.current = null;
+        markerRef.current = null;
+    };
   }, []);
 
+  // 2. effect that updates the marker position when the location state changes
   useEffect(() => {
+    if (!mapRef.current || !userLocation) return;
 
-    if (!location || !mapContainerRef.current ) return;
-    if (!mapRef.current) {
-      
-      // Inizializziamo la mappa passandogli il riferimento (current) invece della stringa 'map'
-      const map = L.map(mapContainerRef.current, {zoomControl: false}  ).setView([location.latitude, location.longitude], 15);
-  
-      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 19,
-        attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-      }).addTo(map);
+    const latLng: [number, number] = [userLocation.latitude, userLocation.longitude];
+    
+    // the map follow the user position only when isFollowing state is true
+    if (markerRef.current) {
+      markerRef.current.setLatLng(latLng);
+    } else {
+      markerRef.current = L.circleMarker(latLng, {
+        radius: 10,           // Dimensione del cerchio in pixel
+        fillColor: "#2563eb", // Colore interno (un bel blu acceso)
+        color: "#ffffff",     // Colore del bordo esterno
+        weight: 3,            // Spessore del bordo bianco
+        opacity: 1,
+        fillOpacity: 0.9,
+      }) 
+      .addTo(mapRef.current)
+      .bindPopup("<b>Sei qui!</b>");
 
-      L.marker([location.latitude, location.longitude])
-        .addTo(map)
-        .bindPopup("<b>Sei qui.</b>")
-        .openPopup();
-      
-      mapRef.current = map;
     }
-
-  }, [location]);
-  
-
-  if (loading) {
-    return <div className="map-loading">Ricerca posizione GPS in corso...</div>;
-  }
-
-  if (error) {
-    return <div className="map-error">{error}</div>;
-  }
-  
+  }, [userLocation]);  
 
   return <div ref={mapContainerRef} className="mapContainer"></div>;
 }
