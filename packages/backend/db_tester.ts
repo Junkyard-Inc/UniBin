@@ -95,6 +95,18 @@ export async function reviewBin(bin_long: number, bin_lat: number, type:string, 
   return advice;
 }
 
+export async function getBinRev() {
+
+}
+
+export async function usefulBinRev() {
+
+}
+
+export async function notUsefulBinRev() {
+
+}
+
 // This function must check the user's daily limits and then if the user is inside the limits it should insert the record into the db
 export async function reviewUser(title: string, body: string, vote: number, reviewed_user: string, reviewing_user: string) {
   //The vote variable must be passed using a number from 0 to 100:
@@ -277,9 +289,9 @@ export async function registerNewUser(email: string, username: string, password:
           ${hash}::TEXT,
           (SELECT rank_id FROM user_rank WHERE rank_name='Monnezzaro Jr'),
           (SELECT role_id FROM user_role WHERE role='Registered User'),
-          (SELECT daily_new_bins_report FROM user_rank WHERE rank_name='Monnezzaro Jr'),
-          (SELECT daily_bins_report FROM user_rank WHERE rank_name='Monnezzaro Jr'),
-          (SELECT daily_users_review FROM user_rank WHERE rank_name='Monnezzaro Jr'),
+          (SELECT daily_new_bins_report FROM user_rank WHERE rank_name='Rifiuto Della Società'),
+          (SELECT daily_bins_report FROM user_rank WHERE rank_name='Rifiuto Della Società'),
+          (SELECT daily_users_review FROM user_rank WHERE rank_name='Rifiuto Della Società'),
           CURRENT_DATE()
         RETURNING user_id
       `;
@@ -340,13 +352,23 @@ export async function resetDailyUserData() {
 
 // This function must calculate a user's rank based off of certain criteria
 // This function is called when a user gets reviewed or when a bin bin review by the same user gets a feedback
-export async function computeUserRank() {
+export async function computeUserRank(userID: number) {
   // What is evaluated:
-  // (N of reported bins still active/N of total reported bins)*100
-  // (N of unreliable bins reviews/N of total bins review)*100
+  // (N of reported bins still active/N of total reported bins)*100 (check if null)
+  // (N of unreliable bins reviews/N of total bins review)*100 (check if null)
+  // average vote across all of user's review that the user received (percent) (check if null)
   // user "seniority"
-  // average vote across all of user's review that the user received (percent)
   // numbers of users reviewed
+  //
+  // The user starts at 0 pts = "Rifiuto Della Società"
+  // The three percent values are multiplied by 100, so they can go from 0-100 to 0-10000
+  // So the maximum score only with three percent values is 30000
+  //
+  // Use years of activity and users reviews only as bonus and malus, if the first three percent values are high,
+  // the two values are multiplied using a multiplier (1.2, 1.5, 1.8), otherwise the two values are multiplied using a divider (0.7, 0.5, 0.3)
+  // For every year that the user has been active on the platfrom +1000 points
+  // For every user reviewed +100 pts (THIS CAN BREAK THE POINTS CALCULATON)
+  // Sum of the points from years of activity and reviews are then multiplied using the bonus/malus multiplier
 }
 
 export async function serverRequestsThrottling() {

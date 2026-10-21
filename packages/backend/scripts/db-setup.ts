@@ -14,9 +14,10 @@ const DB_HOST = process.env.DB_HOST ?? "127.0.0.1";
 
 const binTypes: readonly string[] = ["General Waste", "Food Waste", "Plastic", "Paper", "Glass", "Clothing", "Green Waste", "Stale Oil", "Batteries", "Cigarette Butts"];
 const binStates: readonly string[] = ["Full", "Empty", "Broken", "Removed", "Aflame"];
-const binStatus: readonly string[] = ["Active", "Inactive", "Removed by Admin"]
-const userRanks: readonly string[] = ["Re Dei Monnezzari", "Monnezzaro", "Monnezzaro Jr", "Troll Delle Discariche", "Rifiuto Della Società"]
-const userRoles: readonly string[] = ["Admin", "Registered User"]
+const binStatus: readonly string[] = ["Active", "Inactive", "Removed by Admin"];
+const userRanks: readonly string[] = ["Re Dei Monnezzari", "Monnezzaro", "Monnezzaro Jr", "Troll Delle Discariche", "Rifiuto Della Società"];
+const usrRanksPoints: readonly number[] = [35000, 30000, 15000, 7500, 0]
+const userRoles: readonly string[] = ["Admin", "Registered User"];
 
 // Starts the container (if already started does nothing)
 console.log("Starting Postgres container...");
@@ -69,7 +70,8 @@ const schema = `
     rank_name TEXT NOT NULL UNIQUE,
     daily_new_bins_report SMALLINT NOT NULL,
     daily_bins_report SMALLINT NOT NULL,
-    daily_users_review  SMALLINT NOT NULL
+    daily_users_review  SMALLINT NOT NULL,
+    minimum_score INT NOT NULL
   );
 
   -- user is a reserved word in Postgresql, so this table won't be called just user
@@ -189,16 +191,18 @@ for (const value of binStatus) {
 let dailyNewBinsReport: number = 25;
 let dailyBinsReport: number = 25;
 let dailyUsersReview: number = 25;
+let i = 0;
 
 for (const value of userRanks) {
   await connection`
-    INSERT INTO user_rank (rank_name, daily_new_bins_report, daily_bins_report, daily_users_review)
-    VALUES (${value}, ${dailyNewBinsReport}, ${dailyBinsReport}, ${dailyUsersReview})
+    INSERT INTO user_rank (rank_name, daily_new_bins_report, daily_bins_report, daily_users_review, minimum_score)
+    VALUES (${value}, ${dailyNewBinsReport}, ${dailyBinsReport}, ${dailyUsersReview}, ${usrRanksPoints[i]})
     ON CONFLICT (rank_name) DO NOTHING
     `;
   dailyNewBinsReport -= 5;
   dailyBinsReport -= 5;
   dailyUsersReview -= 5;
+  i++;
 }
 
 for (const value of userRoles) {
