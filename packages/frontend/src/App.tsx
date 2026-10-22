@@ -1,8 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { MapBackground } from "./components/MapBackground/MapBackground";
+import { CustomIconButton } from "./components/Button/Button";
 import "./index.css";
 import L from "leaflet";
 import { stopWatchingLocation, watchUserLocation, type UserCoordinates } from "./services/location";
+
+import MyLocationIcon from "@mui/icons-material/MyLocation";
+import GpsNotFixedIcon from "@mui/icons-material/GpsNotFixed";
 
 export function App() {
   const [ location, setLocation ] = useState<UserCoordinates | null>(null);
@@ -77,7 +81,14 @@ export function App() {
           <h1 className="bitcount-logo">UNIBIN</h1>
           {/* <input type="search" placeholder="Cerca punto sulla mappa..." /> */}
         </header>
-
+        <div style={{ position: "absolute", bottom: "30px", right: "20px", pointerEvents: "auto" }}>
+          <CustomIconButton
+            onClick={handleRecenter}
+            icon={isFollowing ? <MyLocationIcon /> : <GpsNotFixedIcon />}
+            label={isFollowing ? "Inseguimento attivo" : "Centra sulla mia posizione"}
+            isActive={isFollowing}
+          />
+        </div>
       </div>
     </div>
   );

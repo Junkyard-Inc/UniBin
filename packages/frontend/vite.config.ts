@@ -45,5 +45,8 @@ export default defineConfig(({ command }) => {
       ...https,
       proxy: apiProxy,
     },
+    resolve: {
+      dedupe: ['react', 'react-dom']
+    }
   };
 });
