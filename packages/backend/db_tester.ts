@@ -1,3 +1,4 @@
+import type { X509Certificate } from 'node:crypto';
 import { connection } from '.';
 
 //WARN: PAY ATTENTION to SQL Injections
@@ -219,7 +220,7 @@ export async function removeBin(bin_long: number, bin_lat: number, type: string)
       `;
       return "Removal successful";
     } catch (e) {
-      return "Removall unsuccessful";
+      return "Removal unsuccessful";
     }
   }
 }
@@ -365,10 +366,108 @@ export async function computeUserRank(userID: number) {
   // So the maximum score only with three percent values is 30000
   //
   // Use years of activity and users reviews only as bonus and malus, if the first three percent values are high,
-  // the two values are multiplied using a multiplier (1.2, 1.5, 1.8), otherwise the two values are multiplied using a divider (0.7, 0.5, 0.3)
+  // the two values are multiplied using a multiplier (E.g. 1.2, 1.5, 1.8), otherwise the two values are multiplied using a divider (E.g. 0.7, 0.5, 0.3)
   // For every year that the user has been active on the platfrom +1000 points
-  // For every user reviewed +100 pts (THIS CAN BREAK THE POINTS CALCULATON)
-  // Sum of the points from years of activity and reviews are then multiplied using the bonus/malus multiplier
+  // For every user reviewed +100 pts
+  // The points from years of activity and reviews are then multiplied using the bonus/malus multiplier and then added to the total points count
+  //
+  // Multipliers divided by points (<6000: 0.1; <12000: 0.4; <18000: 0.7; <24000: 1; <30000: 1.3)
+
+  let total_pts: number = 0;
+  let multiplier: number = 0;
+  const userRanks: readonly string[] = ["Rifiuto Della Società", "Troll Delle Discariche", "Monnezzaro Jr", "Monnezzaro", "Re Dei Monnezzari"];
+  let usrRank: string = "";
+
+  const [bin_rep] = await connection`
+    SELECT COUNT(*)::int AS total
+    FROM trashbin
+    WHERE reporting_user = ${userID}
+    `;
+
+  if (bin_rep.total !== 0) {
+    const [bin_rep_act] = await connection`
+      SELECT COUNT(*)::int AS total
+      FROM trashbin
+      JOIN bin_status bs ON bs.status_id = trashbin.status
+      WHERE reporting_user = ${userID} AND bs.status = 'Active'
+      `;
+    total_pts += ((bin_rep_act.total / bin_rep.total) * 100) * 100;
+  }
+
+  const [bin_rev] = await connection`
+    SELECT COUNT(*)::int AS total
+    FROM bin_review
+    WHERE reviewing_user = ${userID}
+    `;
+
+  if (bin_rev.total !== 0) {
+    const [bin_rev_rel] = await connection`
+      SELECT COUNT(*)::int AS total
+      FROM bin_review
+      WHERE reviewing_user = ${userID} AND reliable = true
+      `;
+    total_pts += ((bin_rev_rel.total/bin_rev.total)*100)*100
+  }
+
+  const [usr_rev_avg] = await connection`
+    SELECT ROUND(AVG(vote), 4)::float AS average
+    FROM user_review
+    WHERE reviewed_user = ${userID}
+    `;
+
+  if (usr_rev_avg.average !== null) {
+    total_pts += (usr_rev_avg.average * 100) * 100;
+  }
+
+  const [seniority] = await connection`
+    SELECT EXTRACT(YEAR FROM age(CURRENT_DATE, date_of_activation))::int AS years
+    FROM trash_user
+    WHERE user_id = ${userID}
+    `;
+
+  const [n_users_reviewed] = await connection`
+    SELECT COUNT(*) AS total
+    FROM user_review
+    WHERE reviewing_user = ${userID}
+    `;
+
+  if (total_pts >= 0 && total_pts < 6000) {
+    multiplier = 0.1;
+  } else if (total_pts >= 6000 && total_pts < 12000) {
+    multiplier = 0.4;
+  } else if (total_pts >= 12000 && total_pts < 18000) {
+    multiplier = 0.7;
+  } else if (total_pts >= 18000 && total_pts < 24000) {
+    multiplier = 1.0;
+  } else if (total_pts >= 24000) {
+    multiplier = 1.3;
+  }
+
+  total_pts += (seniority.years * 1000) * multiplier;
+  total_pts += (n_users_reviewed.total * 100) * multiplier;
+
+  const [points] = await connection`
+    SELECT minimum_score
+    FROM user_rank
+    ORDER BY minimum_score ASC
+    `;
+
+  for (let i = 0; i < 5; i++) {
+    if (total_pts >= points[i].minimum_score) {
+      usrRank = userRanks[i] ?? "";
+    }
+  }
+
+  await connection`
+    UPDATE trash_user
+    SET
+      rank = (SELECT rank_id FROM user_rank WHERE rank_name = ${usrRank}),
+      new_bins_reported_today = (SELECT daily_new_bins_report FROM user_rank WHERE rank_name = ${usrRank}),
+      bins_reported_today = (SELECT daily_bins_report FROM user_rank WHERE rank_name = ${usrRank}),
+      users_reviewed_today = (SELECT daily_users_review FROM user_rank WHERE rank_name = ${usrRank})
+    WHERE user_id = ${userID}
+    `;
+
 }
 
 export async function serverRequestsThrottling() {
