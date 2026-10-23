@@ -4,6 +4,7 @@
   "type": "module",
   "private": true,
   "scripts": {
+    "test": "bun --env-file=../../.env --env-file=../../.env.test test",
     "db:setup": "bun --env-file=../../.env run scripts/db-setup.ts",
     "db:stop": "docker compose -f docker/dev.db.docker-compose.yml --env-file ../../.env stop db",
     "db:reset": "docker compose -f docker/dev.db.docker-compose.yml --env-file ../../.env down -v && bun run db:setup",

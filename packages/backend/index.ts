@@ -2,9 +2,7 @@
 //
 // ########################################################
 import figlet from "figlet";
-import { SQL } from "bun";
-
-export const connection = new SQL(process.env.DATABASE_URL!);
+import { connection } from './db';
 
 const server = Bun.serve({
   port: Number(process.env.BACKEND_PORT ?? 3001),

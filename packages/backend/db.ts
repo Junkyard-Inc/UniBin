@@ -1,5 +1,6 @@
-import type { X509Certificate } from 'node:crypto';
-import { connection } from '.';
+import { SQL } from "bun";
+
+export const connection = new SQL(process.env.DATABASE_URL!);
 
 //WARN: PAY ATTENTION to SQL Injections
 
@@ -72,7 +73,7 @@ export async function reviewBin(bin_long: number, bin_lat: number, type:string, 
       const [query] = await connection`
         INSERT INTO bin_review (reviewed_bin, reviewing_user, reported_state)
         SELECT
-          (SELECT bin_id FROM trashbin WHERE location = ST_SetSRID(ST_MakePoint(${bin_long}, ${bin_lat}), 4326)),
+          (SELECT bin_id FROM trashbin WHERE location = ST_SetSRID(ST_MakePoint(${bin_long}, ${bin_lat}), 4326) AND type = ${type}),
           (SELECT user_id FROM trash_user WHERE username=${reviewing_user}),
           (SELECT state_id FROM bin_state WHERE state=${reported_state})
         RETURNING bin_rev_id, reviewed_at
@@ -275,7 +276,7 @@ export async function registerNewUser(email: string, username: string, password:
   }
 
   // This checks if the password contanins special characters
-  if (!/[!?.,;:_-£$%€@#*]/.test(password)) {
+  if (!/[!?.,;:_£$%€@#*-]/.test(password)) {
     pw_spec_flag = true;
   }
 
@@ -288,7 +289,7 @@ export async function registerNewUser(email: string, username: string, password:
           ${email}::TEXT,
           ${username}::TEXT,
           ${hash}::TEXT,
-          (SELECT rank_id FROM user_rank WHERE rank_name='Monnezzaro Jr'),
+          (SELECT rank_id FROM user_rank WHERE rank_name='Rifiuto Della Società'),
           (SELECT role_id FROM user_role WHERE role='Registered User'),
           (SELECT daily_new_bins_report FROM user_rank WHERE rank_name='Rifiuto Della Società'),
           (SELECT daily_bins_report FROM user_rank WHERE rank_name='Rifiuto Della Società'),
