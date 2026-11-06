@@ -45,7 +45,7 @@ export async function reportNewBin(longitude: number, latitude: number, state: s
       console.log("New trashbin added successfully!");
       advice = "New trashbin added successfully!";
     } catch (e) {
-      console.log("Something went wrong");
+      console.error("Report new bin failed:", e);
       advice = "Something went wrong";
     }
   }
@@ -90,7 +90,7 @@ export async function reviewBin(bin_long: number, bin_lat: number, type:string, 
       console.log("Trashbin reviewed successfully!");
       advice = "Trashbin reviewed successfully!";
     } catch (e) {
-      console.log("Something went wrong");
+      console.error("Review bin failed:", e);
       advice = "Something went wrong";
     }
   }
@@ -147,7 +147,7 @@ export async function reviewUser(title: string, body: string, vote: number, revi
       console.log("User reviewed successfully!");
       advice = "User reviewed successfully!";
     } catch (e) {
-      console.log("Something went wrong");
+      console.error("Review user failed: ", e);
       advice = "Something went wrong";
     }
   }
@@ -221,7 +221,8 @@ export async function removeBin(bin_long: number, bin_lat: number, type: string)
       `;
       return "Removal successful";
     } catch (e) {
-      return "Removal unsuccessful";
+      console.error("Bin removal failed: ", e);
+      return "Bin removal unsuccessful";
     }
   }
 }
@@ -246,24 +247,30 @@ export async function registerNewUser(email: string, username: string, password:
   const clean_email = email.replace(/[^a-zA-Z0-9@._-]/g, '');
 
   const [email_check] = await connection`
-    SELECT user_id
-    FROM trash_user
-    WHERE email=${clean_email}
+    SELECT EXISTS(
+      SELECT user_id
+      FROM trash_user
+      WHERE email=${clean_email}
+    ) AS email_exists
   `;
 
-  if (email_check.length !== 0) {
-    em_flag = true;
-  }
+  em_flag = email_check.email_exists;
+  //if (email_check.length !== 0) {
+    //em_flag = true;
+  //}
 
   const [usr_check] = await connection`
-    SELECT user_id
-    FROM trash_user
-    WHERE username=${username}
+    SELECT EXISTS(
+      SELECT user_id
+      FROM trash_user
+      WHERE username=${username}
+    ) AS usrname_exists
   `;
 
-  if (usr_check.length !== 0) {
-    usr_flag = true;
-  }
+  usr_flag = usr_check.usrname_exists;
+  //if (usr_check.length !== 0) {
+    //usr_flag = true;
+  //}
 
 
   if (password.length < 8) {
@@ -284,7 +291,7 @@ export async function registerNewUser(email: string, username: string, password:
     const hash = await Bun.password.hash(password); // argon2id by default
     try {
       const [query] = await connection`
-        INSERT INTO trash_user (email, username, password, rank, role, new_bins_reported_today, bins_reported_today, users_reviewed_today, date_of_activation)
+        INSERT INTO trash_user (email, username, password, rank, role, new_bins_reported_today, bins_reported_today, users_reviewed_today)
         SELECT
           ${email}::TEXT,
           ${username}::TEXT,
@@ -293,8 +300,7 @@ export async function registerNewUser(email: string, username: string, password:
           (SELECT role_id FROM user_role WHERE role='Registered User'),
           (SELECT daily_new_bins_report FROM user_rank WHERE rank_name='Rifiuto Della Società'),
           (SELECT daily_bins_report FROM user_rank WHERE rank_name='Rifiuto Della Società'),
-          (SELECT daily_users_review FROM user_rank WHERE rank_name='Rifiuto Della Società'),
-          CURRENT_DATE()
+          (SELECT daily_users_review FROM user_rank WHERE rank_name='Rifiuto Della Società')
         RETURNING user_id
       `;
       if (query.length === 0) {
@@ -302,6 +308,7 @@ export async function registerNewUser(email: string, username: string, password:
       }
       advice = "User added successfully!";
     } catch (e) {
+      console.error("User registration failed: ", e);
       advice = "Something went wrong";
     }
     return advice;

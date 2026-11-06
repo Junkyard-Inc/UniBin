@@ -86,7 +86,7 @@ const schema = `
     new_bins_reported_today SMALLINT NOT NULL DEFAULT 0,
     bins_reported_today SMALLINT NOT NULL DEFAULT 0,
     users_reviewed_today SMALLINT NOT NULL DEFAULT 0,
-    date_of_activation  DATE,
+    date_of_activation  DATE NOT NULL DEFAULT now(),
 
     FOREIGN KEY (rank) REFERENCES user_rank(rank_id),
     FOREIGN KEY (role) REFERENCES user_role(role_id)

@@ -1,5 +1,5 @@
 # How does testing works
-It has been added a "test" voice in ./backend/package.json which specifies to use .env.test fr the db configuration.
+It has been added a "test" voice in ./backend/package.json which specifies to use .env.test for the db configuration.
 
 ./backend/bunfig.toml specifies the preload for every test, which runs ./backend/tests/setup.ts before running the test.
 
