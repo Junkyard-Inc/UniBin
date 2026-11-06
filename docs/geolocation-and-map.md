@@ -16,6 +16,27 @@ The geolocation method used in this project is `watchPosition()`, which register
 
 ### Leaflet
 
-Leaflet, an open-source JavaScript library that allows you to create a navigable map and insert customizable markers and other elements into it, is used to render the map.
+Leaflet, an open-source JavaScript library that allows you to create a navigable map and insert customizable markers and other elements into it, is used to render the map in a html container component.
 
-<!--TODO: Leaflet map object, markers, tile layers -->
+In the project the map is created with a view centered on the user position using the method:
+
+```js
+L.map(<String> id, <Map options> options?).setView(<LatLng> center, <Number> zoom, <Zoom/pan options> options?)
+```
+
+The actual geolocation logic is managed directly by Leaflet, that natively includes the `locate()` method. This method includes the `watchPosition()` mentioned before and needs to add to the map two handlers:
+
+- one for the **position change**.
+  ```js
+  map.on("locationfound", (e: L.LocationEvent) => {});
+  ```
+- one for **errors**.
+  ```js
+  map.on("locationerror", (e) => {});
+  ```
+
+#### Useful components for map controls
+
+- **DomEvent**: functions to work with internal events on the map (like the handlers for the locate method).
+- **DivOverlay**: base model to open an interactive layer on top of the map, it comprises the Popup and Tooltip objects.
+- **Control.Layers**: The layer control with ability to switch from one layer to another. Useful to divide the base layer from the markers and roads.
