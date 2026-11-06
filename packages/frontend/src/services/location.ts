@@ -39,3 +39,46 @@ export async function getUserLocation(): Promise<UserCoordinates> {
     );
   });
 }
+
+export function watchUserLocation(
+  onSuccess: (coords: UserCoordinates) => void,
+  onError: (error: GeolocationPositionError) => void
+): number | null {
+
+  if(!navigator.geolocation) {
+    onError({
+      code: 0,
+      message: "La geolocalizzazione non è supportata dal browser.",
+      PERMISSION_DENIED: 1,
+      POSITION_UNAVAILABLE: 2,
+      TIMEOUT: 3,
+    } as GeolocationPositionError);
+    return null;
+  }
+  
+  return navigator.geolocation.watchPosition(
+    (position) => {
+      onSuccess({
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        accuracy: position.coords.accuracy,
+        heading: position.coords.heading
+      });
+    },
+    (error) => {
+      onError(error);
+    },
+    {
+      enableHighAccuracy: true,
+      maximumAge: 0,
+      timeout: 10000,
+    }
+  )
+}
+
+/**
+ * Interrompe il tracciamento della posizione.
+ */
+export function stopWatchingLocation(watchId: number): void {
+  navigator.geolocation.clearWatch(watchId);
+}

@@ -1,20 +1,14 @@
-import { MapBackground } from "./components/MapBackground/MapBackground";
-import "./index.css";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { MapPage } from "./routes/MapPage/MapPage";
 
 export function App() {
   return (
-    <div className="app-container">
-      {/* 1. Mappa come sfondo */}
-      <MapBackground />
-
-      {/* 2. Layer UI sovrapposto */}
-      <div className="ui-overlay">
-        <header className="top-bar">
-          <h1>UniBin</h1>
-          {/* <input type="search" placeholder="Cerca punto sulla mappa..." /> */}
-        </header>
-      </div>
-    </div>
+    <BrowserRouter>
+      <Routes>
+        {/* MapPage is the landing page */}
+        <Route path="/" element={<MapPage />} />
+      </Routes>
+    </BrowserRouter>
   );
 }
 
