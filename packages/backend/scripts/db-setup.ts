@@ -145,7 +145,7 @@ const schema = `
     not_useful  INT NOT NULL DEFAULT 1,
     reliable BOOLEAN GENERATED ALWAYS AS(
       CASE
-        WHEN ((useful/(useful+not_useful))*100) >= 50 THEN true
+        WHEN (( CAST(useful AS NUMERIC) /(useful+not_useful))*100) >= 50 THEN true -- The casting is necessary so that there is no integer division, which would ruin the calculation
         ELSE false
       END
     ) STORED,

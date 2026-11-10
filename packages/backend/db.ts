@@ -35,6 +35,10 @@ export async function reportNewBin(longitude: number, latitude: number, state: s
       }
       const newBinRev = await reviewBin(longitude, latitude, type, reporting_user, state);
       if (newBinRev === "Something went wrong") {
+        await connection`
+          DELETE FROM trashbin
+          WHERE location = ST_SetSRID(ST_MakePoint(${longitude}, ${latitude}), 4326) AND type = (SELECT type_id FROM bin_type WHERE type = ${type})
+          `;
         throw new Error("Review was not inserted");
       }
       await connection`
@@ -73,7 +77,7 @@ export async function reviewBin(bin_long: number, bin_lat: number, type:string, 
       const [query] = await connection`
         INSERT INTO bin_review (reviewed_bin, reviewing_user, reported_state)
         SELECT
-          (SELECT bin_id FROM trashbin WHERE location = ST_SetSRID(ST_MakePoint(${bin_long}, ${bin_lat}), 4326) AND type = ${type}),
+          (SELECT bin_id FROM trashbin WHERE location = ST_SetSRID(ST_MakePoint(${bin_long}, ${bin_lat}), 4326) AND type = (SELECT type_id FROM bin_type WHERE type = ${type})),
           (SELECT user_id FROM trash_user WHERE username=${reviewing_user}),
           (SELECT state_id FROM bin_state WHERE state=${reported_state})
         RETURNING bin_rev_id, reviewed_at
@@ -170,7 +174,7 @@ export async function getNearBinsPosition(usr_long: number, usr_lat: number, rad
         location,
         ST_SetSRID(ST_MakePoint(${usr_long}, ${usr_lat}), 4326)::geography
       )::float AS distance_m
-    FROM tashbin
+    FROM trashbin
     WHERE ST_DWithin(
       location,
       ST_SetSRID(ST_MakePoint(${usr_long}, ${usr_lat}), 4326)::geography,
@@ -199,7 +203,7 @@ export async function removeBin(bin_long: number, bin_lat: number, type: string)
         ST_SetSRID(ST_MakePoint(${bin_long}, ${bin_lat}), 4326)::geography,
         1
       ) -- Gets all the bins in that position and in a radius of one meter
-      ORDER BY b.location <-> ST_SetSRID(ST_MakePoint(${bin_long}, ${bin_lat}), 4326)::geography -- Operand <-> returns the distance between two spatial values
+      ORDER BY bn.location <-> ST_SetSRID(ST_MakePoint(${bin_long}, ${bin_lat}), 4326)::geography -- Operand <-> returns the distance between two spatial values
       LIMIT 1
     )
     SELECT br.reviewed_bin, br.reliable, bs.state_id, bs.state, br.reviewed_at, (br.reviewed_at < now() - INTERVAL '30 days') AS is_stale
@@ -216,7 +220,7 @@ export async function removeBin(bin_long: number, bin_lat: number, type: string)
     try {
       await connection`
         UPDATE trashbin
-        SET status = (SELECT ststus_id FROM bin_status WHERE status='Inactive')
+        SET status = (SELECT status_id FROM bin_status WHERE status='Inactive')
         WHERE bin_id = ${rev_bin.reviewed_bin}
       `;
       return "Removal successful";
@@ -339,7 +343,7 @@ export async function userLogin(username: string, password: string) {
     FROM trash_user
     WHERE username=${username}
   `;
-  if (query.length === 0) {
+  if (!query) {
     return "No such username";
   } else {
     const pw_ok = await Bun.password.verify(password, query.password); // true / false
@@ -454,14 +458,16 @@ export async function computeUserRank(userID: number) {
   total_pts += (seniority.years * 1000) * multiplier;
   total_pts += (n_users_reviewed.total * 100) * multiplier;
 
-  const [points] = await connection`
+  const points = await connection`
     SELECT minimum_score
     FROM user_rank
     ORDER BY minimum_score ASC
     `;
 
+  console.log("total points:", total_pts);
+
   for (let i = 0; i < 5; i++) {
-    if (total_pts >= points[i].minimum_score) {
+    if (total_pts >= points[i]?.minimum_score) {
       usrRank = userRanks[i] ?? "";
     }
   }

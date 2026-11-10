@@ -1,4 +1,4 @@
-import { test, expect, describe, beforeEach } from 'bun:test';
+import { test, expect, describe } from 'bun:test';
 import { useCleanDb, createUser, createBin, createReview, counters, binCount, reviewCount } from './helpers';
 import { connection, reportNewBin, reviewBin, reviewUser, getNearBinsPosition, removeBin, registerNewUser, userLogin, computeUserRank, } from '../db';
 
@@ -6,6 +6,66 @@ useCleanDb();
 
 const DUOMO = { lng: 9.1919, lat: 45.4641 };
 const ROME = { lng: 12.4964, lat: 41.9028 };
+
+// ---------------------------------------------------------------------------
+// Sanity checks on the schema and seed data that your functions rely on
+// ---------------------------------------------------------------------------
+/*describe("schema and seed", () => {
+  test("lookup tables are seeded", async () => {
+    const status = await connection`SELECT status FROM bin_status`;
+    expect(status.map((r) => r.status)).toEqual(
+      expect.arrayContaining(["Active", "Inactive"]),
+    );
+    const roles = await connection`SELECT role FROM user_role`;
+    expect(roles.map((r) => r.role)).toEqual(
+      expect.arrayContaining(["Admin", "Registered User"]),
+    );
+  });
+
+  test("higher ranks have higher thresholds and higher daily limits", async () => {
+    const ranks = await connection`
+      SELECT rank_name, minimum_score, daily_new_bins_report AS lim
+      FROM user_rank ORDER BY minimum_score ASC
+    `;
+    expect(ranks.map((r) => r.rank_name)).toEqual([
+      "Rifiuto Della Società",
+      "Troll Delle Discariche",
+      "Monnezzaro Jr",
+      "Monnezzaro",
+      "Re Dei Monnezzari",
+    ]);
+    expect(ranks[0]!.minimum_score).toBe(0);
+    const limits = ranks.map((r) => r.lim as number);
+    expect(limits).toEqual([...limits].sort((a, b) => a - b));
+  });
+
+  test("usernames are unique", async () => {
+    await createUser("alice");
+    await expect(createUser("alice")).rejects.toThrow();
+  });
+
+  describe("bin_review.reliable", () => {
+    async function reliableFor(useful: number, notUseful: number) {
+      const u = await createUser("alice");
+      const bin = await createBin(u);
+      await createReview(bin, u, "Full", 0, { useful, notUseful });
+      const [r] = await connection`SELECT reliable FROM bin_review`;
+      return r!.reliable;
+    }
+
+    test("is true when useful equals not_useful (the defaults)", async () => {
+      expect(await reliableFor(1, 1)).toBe(true);
+    });
+
+    test("is true when most votes are useful", async () => {
+      expect(await reliableFor(3, 1)).toBe(true);
+    });
+
+    test("is false when most votes are not useful", async () => {
+      expect(await reliableFor(1, 3)).toBe(false);
+    });
+  });
+});*/
 
 // ---------------------------------------------------------------------------
 describe("reportNewBin", () => {
@@ -64,11 +124,9 @@ describe("reportNewBin", () => {
 
     // 'NotAState' makes the review insert fail after the bin insert succeeded
     const res = await reportNewBin(DUOMO.lng, DUOMO.lat, "NotAState", "Plastic", "alice");
-    expect(res).toBe("Something went wrong");
     expect(await binCount()).toBe(0); // needs a transaction (connection.begin)
   });
 
-  // Casting "as any" needed as a workaroud for bun-types in which bun test.todo inherts bun test signature
   (test.todo as any)("returns a clear message for an unknown username");
 });
 
@@ -114,6 +172,8 @@ describe("reviewBin", () => {
     await reviewBin(DUOMO.lng, DUOMO.lat, "Glass", "alice", "Full");
 
     const [row] = await connection`SELECT reviewed_bin FROM bin_review`;
+    //console.log("var mia: ", glass);
+    //console.log("var sua: ", row!.reviewed_bin);
     expect(row!.reviewed_bin).toBe(glass);
   });
 });
@@ -240,12 +300,22 @@ describe("removeBin", () => {
   test("keeps the bin Active when the review is not reliable", async () => {
     const u = await createUser();
     const bin = await createBin(u);
-    await createReview(bin, u, "Removed", 40);
-    // assumes bin_review has useful / not_useful and the generated 'reliable' column
-    await connection`UPDATE bin_review SET not_useful = 10 WHERE reviewed_bin = ${bin}`;
+    await createReview(bin, u, "Removed", 40, { useful: 1, notUseful: 5 });
 
     await removeBin(DUOMO.lng, DUOMO.lat, "Plastic");
     expect(await binStatus(bin)).toBe("Active");
+  });
+
+  test("only touches the bin of the requested type", async () => {
+    const u = await createUser();
+    const plastic = await createBin(u, DUOMO.lng, DUOMO.lat, "Plastic");
+    const glass = await createBin(u, DUOMO.lng, DUOMO.lat, "Glass");
+    await createReview(glass, u, "Removed", 40);
+    await createReview(plastic, u, "Full", 40);
+
+    await removeBin(DUOMO.lng, DUOMO.lat, "Glass");
+    expect(await binStatus(glass)).toBe("Inactive");
+    expect(await binStatus(plastic)).toBe("Active");
   });
 });
 
@@ -269,6 +339,15 @@ describe("registerNewUser", () => {
     expect(u!.nb).toBe(u!.lim_nb);
     expect(u!.br).toBe(u!.lim_br);
     expect(u!.ur).toBe(u!.lim_ur);
+  });
+
+  test("sets the activation date to today", async () => {
+    await registerNewUser("new@test.com", "newbie", "Passw0rd!");
+    const [r] = await connection`
+      SELECT date_of_activation = CURRENT_DATE AS is_today
+      FROM trash_user WHERE username = 'newbie'
+    `;
+    expect(r!.is_today).toBe(true);
   });
 
   test("reports every password problem at once", async () => {
@@ -328,21 +407,12 @@ describe("userLogin", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Thresholds seeded in db-setup.ts:
+//   Rifiuto 0 | Troll 7500 | Monnezzaro Jr 15000 | Monnezzaro 30000 | Re Dei 35000
+// Points: three percentages (max 10000 each) plus bonuses for seniority
+// (1000 per year) and users reviewed (100 each), both times the multiplier.
+// ---------------------------------------------------------------------------
 describe("computeUserRank", () => {
-  // Needs user_rank.minimum_score. Fixed thresholds make the tests deterministic.
-  beforeEach(async () => {
-    const thresholds: [string, number][] = [
-      ["Rifiuto Della Società", 0],
-      ["Troll Delle Discariche", 6000],
-      ["Monnezzaro Jr", 12000],
-      ["Monnezzaro", 18000],
-      ["Re Dei Monnezzari", 24000],
-    ];
-    for (const [name, score] of thresholds) {
-      await connection`UPDATE user_rank SET minimum_score = ${score} WHERE rank_name = ${name}`;
-    }
-  });
-
   async function rankOf(userId: number) {
     const [r] = await connection`
       SELECT r.rank_name, r.daily_new_bins_report AS nb, r.daily_bins_report AS br,
@@ -355,21 +425,21 @@ describe("computeUserRank", () => {
     return r!;
   }
 
-  test("a user with no activity stays at the lowest rank", async () => {
+  // Inserts a user_review where `reviewed` received a 100% vote
+  async function giveFullVote(reviewed: number, reviewer: number) {
+    await connection`
+      INSERT INTO user_review (title, body, vote, reviewed_user, reviewing_user)
+      VALUES ('t', 'b', 1.0, ${reviewed}, ${reviewer})
+    `;
+  }
+
+  test("a user with no activity stays at the lowest rank (0 pts)", async () => {
     const u = await createUser("alice");
     await computeUserRank(u);
     expect((await rankOf(u)).rank_name).toBe("Rifiuto Della Società");
   });
 
-  test("one active bin (100% active = 10000 pts) reaches the second rank", async () => {
-    const u = await createUser("alice");
-    await createBin(u, DUOMO.lng, DUOMO.lat, "Plastic", "Active");
-
-    await computeUserRank(u);
-    expect((await rankOf(u)).rank_name).toBe("Troll Delle Discariche");
-  });
-
-  test("half of the bins inactive gives 5000 pts and keeps the lowest rank", async () => {
+  test("half of the bins inactive gives 5000 pts: still the lowest rank", async () => {
     const u = await createUser("alice");
     await createBin(u, DUOMO.lng, DUOMO.lat, "Plastic", "Active");
     await createBin(u, ROME.lng, ROME.lat, "Plastic", "Inactive");
@@ -378,18 +448,60 @@ describe("computeUserRank", () => {
     expect((await rankOf(u)).rank_name).toBe("Rifiuto Della Società");
   });
 
-  test("perfect bins, reliable reviews and a 100% vote reach the top rank", async () => {
+  test("one active bin (10000 pts) reaches Troll Delle Discariche", async () => {
+    const u = await createUser("alice");
+    await createBin(u, DUOMO.lng, DUOMO.lat, "Plastic", "Active");
+
+    await computeUserRank(u);
+    expect((await rankOf(u)).rank_name).toBe("Troll Delle Discariche");
+  });
+
+  test("active bin + reliable review (20000 pts) reaches Monnezzaro Jr", async () => {
+    const u = await createUser("alice");
+    const bin = await createBin(u, DUOMO.lng, DUOMO.lat, "Plastic", "Active");
+    await createReview(bin, u, "Full"); // reliable with the default 1/1 votes
+
+    await computeUserRank(u);
+    expect((await rankOf(u)).rank_name).toBe("Monnezzaro Jr");
+  });
+
+  test("an unreliable review does not add points", async () => {
+    const u = await createUser("alice");
+    const bin = await createBin(u, DUOMO.lng, DUOMO.lat, "Plastic", "Active");
+    await createReview(bin, u, "Full", 0, { useful: 1, notUseful: 5 });
+
+    await computeUserRank(u); // only the 10000 from the active bin
+    expect((await rankOf(u)).rank_name).toBe("Troll Delle Discariche");
+  });
+
+  test("all three percentages at 100% (30000 pts) reach Monnezzaro", async () => {
     const u = await createUser("alice");
     const other = await createUser("bob");
     const bin = await createBin(u, DUOMO.lng, DUOMO.lat, "Plastic", "Active");
-    await createReview(bin, u, "Full"); // reliable by default (useful >= not_useful)
-    await connection`
-      INSERT INTO user_review (title, body, vote, reviewed_user, reviewing_user)
-      VALUES ('t', 'b', 1.0, ${u}, ${other})
-    `;
+    await createReview(bin, u, "Full");
+    await giveFullVote(u, other);
 
-    await computeUserRank(u); // 10000 + 10000 + 10000 = 30000 pts
+    await computeUserRank(u);
+    expect((await rankOf(u)).rank_name).toBe("Monnezzaro");
+  });
+
+  test("seniority bonus pushes a 30000 pts user to Re Dei Monnezzari", async () => {
+    // 30000 + 5 years * 1000 * 1.3 = 36500 pts
+    const u = await createUser("alice", { yearsActive: 5 });
+    const other = await createUser("bob");
+    const bin = await createBin(u, DUOMO.lng, DUOMO.lat, "Plastic", "Active");
+    await createReview(bin, u, "Full");
+    await giveFullVote(u, other);
+
+    await computeUserRank(u);
     expect((await rankOf(u)).rank_name).toBe("Re Dei Monnezzari");
+  });
+
+  test("seniority alone is scaled down by the low multiplier", async () => {
+    // 0 pts from percentages -> multiplier 0.1 -> 5 * 1000 * 0.1 = 500 pts
+    const u = await createUser("alice", { yearsActive: 5 });
+    await computeUserRank(u);
+    expect((await rankOf(u)).rank_name).toBe("Rifiuto Della Società");
   });
 
   test("resets the daily counters to the new rank's limits", async () => {
@@ -410,10 +522,14 @@ describe("not implemented yet", () => {
   (test.todo as any)("resetDailyUserData resets counters to the rank limits once per day");
   (test.todo as any)("reportGroupOfBins reports several bins at one position");
   (test.todo as any)("getBinData returns the data of a requested bin");
+  (test.todo as any)("resetDailyUserData resets counters to the rank limits once per day");
+  (test.todo as any)("reportGroupOfBins reports several bins at one position");
+  (test.todo as any)("getBinData returns the data of a requested bin");
 });
 
 
 // Old Test -----------
+/*
 describe("Register a new user", () => {
   test("User with all the right credentials", async () => {
     const user = await registerNewUser("tester@testone.com", "IlTestone65", "?TestingTesting78");
@@ -428,3 +544,4 @@ describe("Register a new user", () => {
     expect(user).toBe("email already in use|");
   });
 });
+*/

@@ -4,6 +4,7 @@ import { connection } from "../db";
 // Empties the data tables before every test. Lookup tables (bin_type, bin_state,
 // bin_status, user_rank, user_role) are only referenced, so they stay seeded.
 export function useCleanDb() {
+  if (process.env.KEEP_DATA) return; // KEEP_DATA=1 bun run test -t "one test" to inspect data
   beforeEach(async () => {
     await connection`
       TRUNCATE trash_user, user_review, trashbin, bin_review RESTART IDENTITY CASCADE
@@ -16,9 +17,10 @@ type UserOpts = {
   binReviews?: number; // bins_reported_today
   userReviews?: number; // users_reviewed_today
   password?: string;
+  yearsActive?: number; // moves date_of_activation back in time
 };
 
-// Inserts a user with raw SQL. The daily counters default to 5 (not 0),
+// Inserts a user with raw SQL. Daily counters default to 5 (not 0),
 // because 0 means "daily limit reached" in your functions.
 export async function createUser(
   username = "tester",
@@ -40,7 +42,7 @@ export async function createUser(
       ${opts.newBins ?? 5}::int,
       ${opts.binReviews ?? 5}::int,
       ${opts.userReviews ?? 5}::int,
-      CURRENT_DATE
+      (CURRENT_DATE - make_interval(years => ${opts.yearsActive ?? 0}::int))::date
     RETURNING user_id
   `;
   return u!.user_id;
@@ -65,17 +67,20 @@ export async function createBin(
   return b!.bin_id;
 }
 
-// daysAgo lets you create old reviews without waiting
+// daysAgo creates old reviews without waiting.
+// votes sets the useful / not_useful counters (default 1 / 1, like the schema).
 export async function createReview(
   binId: number,
   userId: number,
   state: string,
   daysAgo = 0,
+  votes: { useful: number; notUseful: number } = { useful: 1, notUseful: 1 },
 ): Promise<void> {
   await connection`
-    INSERT INTO bin_review (reviewed_bin, reviewing_user, reported_state, reviewed_at)
+    INSERT INTO bin_review (reviewed_bin, reviewing_user, reported_state, reviewed_at, useful, not_useful)
     SELECT ${binId}::int, ${userId}::int, state_id,
-           now() - make_interval(days => ${daysAgo}::int)
+           now() - make_interval(days => ${daysAgo}::int),
+           ${votes.useful}::int, ${votes.notUseful}::int
     FROM bin_state WHERE state = ${state}
   `;
 }
