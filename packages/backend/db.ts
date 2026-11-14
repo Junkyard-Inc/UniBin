@@ -6,58 +6,128 @@ export const connection = new SQL(process.env.DATABASE_URL!);
 
 // This function must check the user's daily limits then it should let the user insert the record into the db
 export async function reportNewBin(longitude: number, latitude: number, state: string, type: string, reporting_user: string) {
-  //WARN: Check first if the bin is already in the db with status "Inactive"
+
   const [check] = await connection`
     SELECT new_bins_reported_today
     FROM trash_user
     WHERE username=${reporting_user}
   `;
   let advice = "empty";
-  if (check.new_bins_reported_today === 0) {
-    console.log("Your reached your daily limit for new bins report");
-    advice = "Your reached your daily limit for new bins report";
-  }
-  else {
-    try
-    {
-      const [newBinQuery] = await connection`
-        INSERT INTO trashbin (location, type, status, reporting_user)
-        SELECT
-          ST_SetSRID(ST_MakePoint(${longitude}, ${latitude}), 4326)::geography,
-          (SELECT type_id FROM bin_type WHERE type=${type}),
-          (SELECT status_id FROM bin_status WHERE status='Active'),
-          (SELECT user_id FROM trash_user WHERE username=${reporting_user})
-        RETURNING bin_id, created_at
-      `;
-      // In this case the field created_at is not inserted manually cause in the schema the field is set to DEFAULT now()
-      if (newBinQuery.length === 0) {
-        throw new Error("Nothing was inserted");
-      }
-      const newBinRev = await reviewBin(longitude, latitude, type, reporting_user, state);
-      if (newBinRev === "Something went wrong") {
+  if (!check) {
+    advice = "No user found";
+  } else if (check.new_bins_reported_today === 0) {
+    advice = "You reached your daily limit for new bins report";
+  } else {
+    //checking first if the bin is already in the db with status "Inactive"
+    const [binExists] = await connection`
+      SELECT bn.bin_id, bs.status
+      FROM trashbin bn
+      JOIN bin_status bs ON bs.status_id = bn.status
+      WHERE ST_DWithin(bn.location, ST_SetSRID(ST_MakePoint(${longitude}, ${latitude}), 4326)::geography, 1) AND bn.type = (SELECT type_id FROM bin_type WHERE type = ${type})
+    `;
+    if (!binExists) {
+      // bin does not exist
+      try
+      {
+        const [newBinQuery] = await connection`
+          INSERT INTO trashbin (location, type, status, reporting_user)
+          SELECT
+            ST_SetSRID(ST_MakePoint(${longitude}, ${latitude}), 4326)::geography,
+            (SELECT type_id FROM bin_type WHERE type=${type}),
+            (SELECT status_id FROM bin_status WHERE status='Active'),
+            (SELECT user_id FROM trash_user WHERE username=${reporting_user})
+          RETURNING bin_id, created_at
+        `;
+        // In this case the field created_at is not inserted manually cause in the schema the field is set to DEFAULT now()
+        if (!newBinQuery) {
+          throw new Error("Nothing was inserted");
+        }
+        const newBinRev = await reviewBin(longitude, latitude, type, reporting_user, state);
+        if (newBinRev !== "Trashbin reviewed successfully!") {
+          await connection`
+            DELETE FROM trashbin
+            WHERE bin_id = ${newBinQuery.bin_id}
+            `;
+          throw new Error("Review was not inserted");
+        }
         await connection`
-          DELETE FROM trashbin
-          WHERE location = ST_SetSRID(ST_MakePoint(${longitude}, ${latitude}), 4326) AND type = (SELECT type_id FROM bin_type WHERE type = ${type})
-          `;
-        throw new Error("Review was not inserted");
+          UPDATE trash_user
+          SET new_bins_reported_today = (new_bins_reported_today - 1)
+          WHERE username=${reporting_user}
+        `;
+        console.log("New trashbin added successfully!");
+        advice = "New trashbin added successfully!";
+      } catch (e) {
+        console.error("Report new bin failed:", e);
+        advice = "Something went wrong";
       }
-      await connection`
-        UPDATE trash_user
-        SET new_bins_reported_today = (new_bins_reported_today - 1)
-        WHERE username=${reporting_user}
-      `;
-      console.log("New trashbin added successfully!");
-      advice = "New trashbin added successfully!";
-    } catch (e) {
-      console.error("Report new bin failed:", e);
-      advice = "Something went wrong";
+    } else if (binExists.status === "Inactive") { // WARN: Come gestisco Removed by Admin?
+      // Bin exists but is inactive
+      try {
+        await connection`
+          UPDATE trashbin
+          SET status = (SELECT status_id FROM bin_status WHERE status = 'Active')
+          WHERE bin_id = ${binExists.bin_id}
+          `;
+        advice = "Trashbin reactivated";
+      } catch (e) {
+        console.error("Report new bin failed:", e);
+        advice = "Something went wrong";
+      }
+    } else {
+      // Bin already exists and is active
+      advice = "Trashbin already exists";
     }
   }
   return advice;
 }
 
+//WARN: Still very experimental needs ATTENTION
 export async function reportGroupOfBins(longitude: number, latitude: number, states: string[], types: string[], reporting_user: string) {
   // This function lets a user report multiple bins in the same position
+  if (states.length !== types.length) {
+    return "states array does not match types array length";
+  }
+  if (types.length === 0) {
+    return "Array length not valid";
+  }
+  // Same type at the same position is the same bin, so it can't appear twice
+  if (new Set(types).size !== types.length) {
+    return "Duplicate bin types in the same position";
+  }
+
+  // Refuse the whole group up front if the user can't afford it
+  const [check] = await connection`
+    SELECT new_bins_reported_today AS new_bins, bins_reported_today AS bin_reviews
+    FROM trash_user
+    WHERE username = ${reporting_user}
+  `;
+  if (!check) {
+    return "No user found";
+  }
+  if (check.new_bins < types.length || check.bin_reviews < types.length) {
+    return "Not enough daily reports left for this group";
+  }
+
+  let added = 0;
+  let reactivated = 0;
+  let existing = 0;
+
+  for (let i = 0; i < types.length; i++) {
+    const res = await reportNewBin(longitude, latitude, states[i]!, types[i]!, reporting_user);
+
+    if (res === "New trashbin added successfully!") {
+      added++;
+    } else if (res === "Trashbin reactivated") {
+      reactivated++;
+    } else if (res === "Trashbin already exists") {
+      existing++; // not an error, keep going
+    } else {
+      return `Stopped at bin ${i + 1} (${types[i]}): ${res}. ${added + reactivated} bin(s) before it were saved.`;
+    }
+  }
+
+  return `Group reported: ${added} added, ${reactivated} reactivated, ${existing} already existed`;
 }
 
 // This function must check first the user's daily limits, second if the user is near the bin and then if that is true it should insert the record into the db
@@ -68,11 +138,12 @@ export async function reviewBin(bin_long: number, bin_lat: number, type:string, 
     WHERE username=${reviewing_user}
   `;
   let advice = "empty";
-  if (check.bins_reported_today === 0) {
-    console.log("Your reached your daily limit for bins reviews");
-    advice = "Your reached your daily limit for bins reviews";
-  }
-  else {
+  if (!check) {
+    advice = "No user found";
+  } else if (check.bins_reported_today === 0) {
+    console.log("You reached your daily limit for bins reviews");
+    advice = "You reached your daily limit for bins reviews";
+  } else {
     try {
       const [query] = await connection`
         INSERT INTO bin_review (reviewed_bin, reviewing_user, reported_state)
@@ -83,7 +154,7 @@ export async function reviewBin(bin_long: number, bin_lat: number, type:string, 
         RETURNING bin_rev_id, reviewed_at
       `;
       // In this case the field reviewed_at is not inserted manually cause in the schema the field is set to DEFAULT now()
-      if (query.length === 0) {
+      if (!query) {
         throw new Error("Nothing was inserted");
       }
       await connection`
@@ -115,44 +186,51 @@ export async function notUsefulBinRev() {
 
 // This function must check the user's daily limits and then if the user is inside the limits it should insert the record into the db
 export async function reviewUser(title: string, body: string, vote: number, reviewed_user: string, reviewing_user: string) {
-  //The vote variable must be passed using a number from 0 to 100:
-  vote = vote / 100;
-  const [check] = await connection`
-    SELECT users_reviewed_today
-    FROM trash_user
-    WHERE username=${reviewing_user}
-  `;
   let advice = "empty";
-  if (check.users_reviewed_today === 0) {
-    console.log("Your reached your daily limit for users reviews");
-    advice = "Your reached your daily limit for users reviews";
-  }
-  else {
-    try {
-      const [query] = await connection`
-        INSERT INTO user_review (title, body, vote, reviewed_user, reviewing_user)
-        SELECT
-          ${title}::TEXT,
-          ${body}::TEXT,
-          ${vote}::NUMERIC(5, 4),
-          (SELECT user_id FROM trash_user WHERE username=${reviewed_user}),
-          (SELECT user_id FROM trash_user WHERE username=${reviewing_user})
-        RETURNING user_rev_id, date_time
-      `;
-      // In this case the field date_time is not inserted manually cause in the schema the field is set to DEFAULT now()
-      if (query.length === 0) {
-        throw new Error("Nothing was inserted");
+  //The vote variable must be passed using a number from 0 to 100:
+  if (!Number.isFinite(vote) || vote < 0 || vote > 100) {
+    advice = "Invalid vote value";
+  } else if (reviewed_user === reviewing_user) {
+    advice = "Users can't review themselves";
+  } else {
+    vote = vote / 100;
+    const [check] = await connection`
+      SELECT users_reviewed_today
+      FROM trash_user
+      WHERE username=${reviewing_user}
+    `;
+    if (!check) {
+      advice = "No user found";
+    } else if (check.users_reviewed_today === 0) {
+      console.log("You reached your daily limit for users reviews");
+      advice = "You reached your daily limit for users reviews";
+    } else {
+      try {
+        const [query] = await connection`
+          INSERT INTO user_review (title, body, vote, reviewed_user, reviewing_user)
+          SELECT
+            ${title}::TEXT,
+            ${body}::TEXT,
+            ${vote}::NUMERIC(5, 4),
+            (SELECT user_id FROM trash_user WHERE username=${reviewed_user}),
+            (SELECT user_id FROM trash_user WHERE username=${reviewing_user})
+          RETURNING user_rev_id, date_time
+        `;
+        // In this case the field date_time is not inserted manually cause in the schema the field is set to DEFAULT now()
+        if (!query) {
+          throw new Error("Nothing was inserted");
+        }
+        await connection`
+          UPDATE trash_user
+          SET users_reviewed_today = (users_reviewed_today - 1)
+          WHERE username=${reviewing_user}
+        `;
+        console.log("User reviewed successfully!");
+        advice = "User reviewed successfully!";
+      } catch (e) {
+        console.error("Review user failed: ", e);
+        advice = "Something went wrong";
       }
-      await connection`
-        UPDATE trash_user
-        SET users_reviewed_today = (users_reviewed_today - 1)
-        WHERE username=${reviewing_user}
-      `;
-      console.log("User reviewed successfully!");
-      advice = "User reviewed successfully!";
-    } catch (e) {
-      console.error("Review user failed: ", e);
-      advice = "Something went wrong";
     }
   }
   return advice;

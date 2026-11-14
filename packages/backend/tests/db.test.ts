@@ -69,10 +69,20 @@ const ROME = { lng: 12.4964, lat: 41.9028 };
 
 // ---------------------------------------------------------------------------
 describe("reportNewBin", () => {
+  async function statusOf(binId: number) {
+    const [r] = await connection`
+      SELECT s.status FROM trashbin b
+      JOIN bin_status s ON s.status_id = b.status
+      WHERE b.bin_id = ${binId}
+    `;
+    return r!.status;
+  }
+
+  // signature: (longitude, latitude, state, type, reporting_user)
+
   test("inserts an Active bin, a first review, and spends one of each counter", async () => {
     await createUser("alice");
 
-    // signature: (longitude, latitude, state, type, reporting_user)
     const res = await reportNewBin(DUOMO.lng, DUOMO.lat, "Full", "Plastic", "alice");
     expect(res).toBe("New trashbin added successfully!");
 
@@ -102,12 +112,47 @@ describe("reportNewBin", () => {
     expect(row!.lat).toBeCloseTo(DUOMO.lat, 4);
   });
 
-  test("refuses when the daily limit is reached", async () => {
+  test("the first review carries the reported state", async () => {
+    await createUser("alice");
+    await reportNewBin(DUOMO.lng, DUOMO.lat, "Broken", "Plastic", "alice");
+
+    const [r] = await connection`
+      SELECT s.state FROM bin_review br JOIN bin_state s ON s.state_id = br.reported_state
+    `;
+    expect(r!.state).toBe("Broken");
+  });
+
+  test("refuses when the daily new-bins limit is reached", async () => {
     await createUser("alice", { newBins: 0 });
 
     const res = await reportNewBin(DUOMO.lng, DUOMO.lat, "Full", "Plastic", "alice");
-    expect(res).toBe("Your reached your daily limit for new bins report");
+    expect(res).toBe("You reached your daily limit for new bins report");
     expect(await binCount()).toBe(0);
+  });
+
+  test("the last allowed report succeeds and the next one is refused", async () => {
+    await createUser("alice", { newBins: 1 });
+
+    const first = await reportNewBin(DUOMO.lng, DUOMO.lat, "Full", "Plastic", "alice");
+    expect(first).toBe("New trashbin added successfully!");
+    expect((await counters("alice")).new_bins).toBe(0);
+
+    const second = await reportNewBin(ROME.lng, ROME.lat, "Full", "Plastic", "alice");
+    expect(second).toBe("You reached your daily limit for new bins report");
+    expect(await binCount()).toBe(1);
+  });
+
+  test("inserts nothing when the review limit is reached", async () => {
+    await createUser("alice", { binReviews: 0 });
+
+    const res = await reportNewBin(DUOMO.lng, DUOMO.lat, "Full", "Plastic", "alice");
+    expect(res).toBe("Something went wrong");
+    expect(await binCount()).toBe(0);
+    expect(await reviewCount()).toBe(0);
+
+    const c = await counters("alice");
+    expect(c.new_bins).toBe(5); // not spent
+    expect(c.bin_reviews).toBe(0);
   });
 
   test("fails for an unknown bin type and changes nothing", async () => {
@@ -119,15 +164,86 @@ describe("reportNewBin", () => {
     expect((await counters("alice")).new_bins).toBe(5);
   });
 
-  test("does not leave a bin behind when the first review fails", async () => {
+  test("removes the new bin when the first review fails (unknown state)", async () => {
     await createUser("alice");
 
-    // 'NotAState' makes the review insert fail after the bin insert succeeded
     const res = await reportNewBin(DUOMO.lng, DUOMO.lat, "NotAState", "Plastic", "alice");
-    expect(await binCount()).toBe(0); // needs a transaction (connection.begin)
+    expect(res).toBe("Something went wrong");
+    expect(await binCount()).toBe(0);
+    expect(await reviewCount()).toBe(0);
+
+    const c = await counters("alice");
+    expect(c.new_bins).toBe(5);
+    expect(c.bin_reviews).toBe(5);
   });
 
-  (test.todo as any)("returns a clear message for an unknown username");
+  test("does not create a duplicate when an active bin already exists there", async () => {
+    const u = await createUser("alice");
+    await createBin(u, DUOMO.lng, DUOMO.lat, "Plastic", "Active");
+
+    const res = await reportNewBin(DUOMO.lng, DUOMO.lat, "Full", "Plastic", "alice");
+    expect(res).toBe("Trashbin already exists");
+    expect(await binCount()).toBe(1);
+    expect(await reviewCount()).toBe(0);
+    expect((await counters("alice")).new_bins).toBe(5); // nothing spent
+  });
+
+  test("allows a bin of a different type at the same position", async () => {
+    const u = await createUser("alice");
+    await createBin(u, DUOMO.lng, DUOMO.lat, "Plastic", "Active");
+
+    const res = await reportNewBin(DUOMO.lng, DUOMO.lat, "Full", "Glass", "alice");
+    expect(res).toBe("New trashbin added successfully!");
+    expect(await binCount()).toBe(2);
+  });
+
+  test("reactivates an Inactive bin instead of inserting a new one", async () => {
+    const u = await createUser("alice");
+    const bin = await createBin(u, DUOMO.lng, DUOMO.lat, "Plastic", "Inactive");
+
+    const res = await reportNewBin(DUOMO.lng, DUOMO.lat, "Full", "Plastic", "alice");
+    expect(res).toBe("Trashbin reactivated");
+    expect(await binCount()).toBe(1);
+    expect(await statusOf(bin)).toBe("Active");
+  });
+
+  test("does not reactivate a bin removed by an admin", async () => {
+    const u = await createUser("alice");
+    const bin = await createBin(u, DUOMO.lng, DUOMO.lat, "Plastic", "Removed by Admin");
+
+    await reportNewBin(DUOMO.lng, DUOMO.lat, "Full", "Plastic", "alice");
+    expect(await statusOf(bin)).toBe("Removed by Admin");
+    expect(await binCount()).toBe(1);
+  });
+
+  test("returns 'No user found' for an unknown username", async () => {
+    const res = await reportNewBin(DUOMO.lng, DUOMO.lat, "Full", "Plastic", "ghost");
+    expect(res).toBe("No user found");
+    expect(await binCount()).toBe(0);
+  });
+
+  test("treats a bin about 0.4 m away as the same bin", async () => {
+    const u = await createUser("alice");
+    await createBin(u, DUOMO.lng, DUOMO.lat, "Plastic", "Active");
+
+    // 0.000004 degrees of latitude is roughly 0.4 m
+    const res = await reportNewBin(DUOMO.lng, DUOMO.lat + 0.000004, "Full", "Plastic", "alice");
+    expect(res).toBe("Trashbin already exists");
+    expect(await binCount()).toBe(1);
+  });
+
+  test("treats a bin about 50 m away as a different bin", async () => {
+    const u = await createUser("alice");
+    await createBin(u, DUOMO.lng, DUOMO.lat, "Plastic", "Active");
+
+    // 0.00045 degrees of latitude is roughly 50 m
+    const res = await reportNewBin(DUOMO.lng, DUOMO.lat + 0.00045, "Full", "Plastic", "alice");
+    expect(res).toBe("New trashbin added successfully!");
+    expect(await binCount()).toBe(2);
+  });
+
+  (test.todo as any)("decide whether reactivating a bin spends a counter and adds a review");
+  (test.todo as any)("returns a specific message for a bin removed by an admin");
 });
 
 // ---------------------------------------------------------------------------
@@ -152,7 +268,7 @@ describe("reviewBin", () => {
     await createBin(u);
 
     const res = await reviewBin(DUOMO.lng, DUOMO.lat, "Plastic", "alice", "Full");
-    expect(res).toBe("Your reached your daily limit for bins reviews");
+    expect(res).toBe("You reached your daily limit for bins reviews");
     expect(await reviewCount()).toBe(0);
   });
 
@@ -175,6 +291,15 @@ describe("reviewBin", () => {
     //console.log("var mia: ", glass);
     //console.log("var sua: ", row!.reviewed_bin);
     expect(row!.reviewed_bin).toBe(glass);
+  });
+
+  test("returns 'No user found' for an unknown reviewing user", async () => {
+    const u = await createUser("alice");
+    await createBin(u); // the bin exists, only the user is missing
+
+    const res = await reviewBin(DUOMO.lng, DUOMO.lat, "Plastic", "ghost", "Full");
+    expect(res).toBe("No user found");
+    expect(await reviewCount()).toBe(0);
   });
 });
 
@@ -206,7 +331,7 @@ describe("reviewUser", () => {
     await createUser("bob");
 
     const res = await reviewUser("x", "y", 50, "bob", "alice");
-    expect(res).toBe("Your reached your daily limit for users reviews");
+    expect(res).toBe("You reached your daily limit for users reviews");
 
     const [r] = await connection`SELECT COUNT(*)::int AS total FROM user_review`;
     expect(r!.total).toBe(0);
@@ -217,6 +342,84 @@ describe("reviewUser", () => {
 
     const res = await reviewUser("x", "y", 50, "ghost", "alice");
     expect(res).toBe("Something went wrong");
+  });
+
+  test("returns 'No user found' for an unknown reviewing user", async () => {
+    await createUser("bob"); // the reviewed user exists, only the reviewer is missing
+
+    const res = await reviewUser("x", "y", 50, "bob", "ghost");
+    expect(res).toBe("No user found");
+
+    const [r] = await connection`SELECT COUNT(*)::int AS total FROM user_review`;
+    expect(r!.total).toBe(0);
+  });
+
+  test("rejects a vote above 100", async () => {
+    await createUser("alice");
+    await createUser("bob");
+
+    const res = await reviewUser("x", "y", 101, "bob", "alice");
+    expect(res).toBe("Invalid vote value");
+
+    const [r] = await connection`SELECT COUNT(*)::int AS total FROM user_review`;
+    expect(r!.total).toBe(0);
+    expect((await counters("alice")).user_reviews).toBe(5); // not spent
+  });
+
+  test("rejects a negative vote", async () => {
+    await createUser("alice");
+    await createUser("bob");
+
+    expect(await reviewUser("x", "y", -1, "bob", "alice")).toBe("Invalid vote value");
+  });
+
+  test("accepts the edge values 0 and 100", async () => {
+    await createUser("alice");
+    await createUser("bob");
+
+    expect(await reviewUser("low", "x", 0, "bob", "alice")).toBe("User reviewed successfully!");
+    expect(await reviewUser("high", "x", 100, "bob", "alice")).toBe("User reviewed successfully!");
+  });
+
+  test("rounds the vote to 4 decimals", async () => {
+    await createUser("alice");
+    await createUser("bob");
+
+    await reviewUser("x", "y", 33.333, "bob", "alice"); // 0.33333 -> 0.3333
+    const [row] = await connection`SELECT vote::float AS vote FROM user_review`;
+    expect(row!.vote).toBeCloseTo(0.3333, 4);
+  });
+
+  test("validates the vote before looking up the user", async () => {
+    // documents the order of your checks: an invalid vote wins over an unknown user
+    const res = await reviewUser("x", "y", 500, "bob", "ghost");
+    expect(res).toBe("Invalid vote value");
+  });
+
+  test("rejects a vote that is not a number", async () => {
+    await createUser("alice");
+    await createUser("bob");
+
+    expect(await reviewUser("x", "y", NaN, "bob", "alice")).toBe("Invalid vote value");
+    expect(await reviewUser("x", "y", Infinity, "bob", "alice")).toBe("Invalid vote value");
+  });
+
+  test("a user can't review themselves", async () => {
+    await createUser("alice");
+
+    const res = await reviewUser("x", "y", 50, "alice", "alice");
+    expect(res).toBe("Users can't review themselves");
+
+    const [r] = await connection`SELECT COUNT(*)::int AS total FROM user_review`;
+    expect(r!.total).toBe(0);
+    expect((await counters("alice")).user_reviews).toBe(5); // not spent
+  });
+
+  test("an invalid vote is reported before the self-review check", async () => {
+    // documents the order of your checks
+    await createUser("alice");
+
+    expect(await reviewUser("x", "y", 500, "alice", "alice")).toBe("Invalid vote value");
   });
 });
 
