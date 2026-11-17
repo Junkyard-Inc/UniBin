@@ -172,16 +172,44 @@ export async function reviewBin(bin_long: number, bin_lat: number, type:string, 
   return advice;
 }
 
-export async function getBinRev() {
+// Increase the "useful counter" of a given bin review
+export async function usefulBinRev(bin_long: number, bin_lat: number, bin_type: string, username: string, date_time: Date) {
+  try {
+    let [binRev] = await getBinRevID(bin_long, bin_lat, bin_type, username, date_time);
 
+    if (binRev.bin_rev_id === null) {
+      throw new Error("Cannot find bin review")
+    }
+
+    await connection`
+      UPDATE bin_review
+      SET useful = useful + 1
+      WHERE bin_rev_id = ${binRev.bin_rev_id}
+    `;
+  } catch (e) {
+    console.error("Something went wrong: ", e);
+    return null
+  }
 }
 
-export async function usefulBinRev() {
+// Increase the "not useful counter" of a given bin review
+export async function notUsefulBinRev(bin_long: number, bin_lat: number, bin_type: string, username: string, date_time: Date) {
+  try {
+    let [binRev] = await getBinRevID(bin_long, bin_lat, bin_type, username, date_time);
 
-}
+    if (binRev.bin_rev_id === null) {
+      throw new Error("Cannot find bin review")
+    }
 
-export async function notUsefulBinRev() {
-
+    await connection`
+      UPDATE bin_review
+      SET not_useful = not_useful + 1
+      WHERE bin_rev_id = ${binRev.bin_rev_id}
+    `;
+  } catch (e) {
+    console.error("Something went wrong: ", e);
+    return null
+  }
 }
 
 // This function must check the user's daily limits and then if the user is inside the limits it should insert the record into the db
@@ -236,11 +264,6 @@ export async function reviewUser(title: string, body: string, vote: number, revi
   return advice;
 }
 
-// This function must get the specified bin data that the user request
-export async function getBinData() {
-  // Dilemma, do we save the data returned from the query in an object or we just format a string to return all the data?
-}
-
 // This function must return the position of all the nearby bins given a certain radius around the user
 export async function getNearBinsPosition(usr_long: number, usr_lat: number, radius: number) {
   // Returning an array containing longitude, latitude and distance from the position of nearby bins
@@ -263,13 +286,12 @@ export async function getNearBinsPosition(usr_long: number, usr_lat: number, rad
 }
 
 // This function updates the bin state based off of the recent bin reviews
-export async function updateBinState(bin_long: number, bin_lat: number, type: number) {
+// export async function updateBinState(bin_long: number, bin_lat: number, type: number) {
   // Is it really necessary?
-}
+// }
 
 // This function must "remove" a bin from the db if the latest reported state is
 export async function removeBin(bin_long: number, bin_lat: number, type: string) {
-  // !! Evaluate if it is better to remove state from the trashbin table and use only bin_review
   // This query gets the latest review of a given trashbin
   const [rev_bin] = await connection`
     WITH selected_bin AS (
@@ -307,10 +329,6 @@ export async function removeBin(bin_long: number, bin_lat: number, type: string)
       return "Bin removal unsuccessful";
     }
   }
-}
-
-export async function getUserInfo() {
-  // This function must get the various public info for a given user
 }
 
 // This function must let a new user register to the site
@@ -433,14 +451,6 @@ export async function userLogin(username: string, password: string) {
   }
 }
 
-// This function must periodically check what time it is and then reset all the users usage data for the day at a given time (daily)
-export async function resetDailyUserData() {
-  // This could be done in three ways:
-  // 1. checking a given arbitrary time server-side and reset all the users at the same time
-  // 2. we could add a time-zone to user entity and reset everytime a certain time-zone reaches midnight
-  // 3. we could execute the reset everytime the user does something while also checking the date
-}
-
 // This function must calculate a user's rank based off of certain criteria
 // This function is called when a user gets reviewed or when a bin bin review by the same user gets a feedback
 export async function computeUserRank(userID: number) {
@@ -559,6 +569,164 @@ export async function computeUserRank(userID: number) {
       users_reviewed_today = (SELECT daily_users_review FROM user_rank WHERE rank_name = ${usrRank})
     WHERE user_id = ${userID}
     `;
+
+}
+
+// This function must periodically check what time it is and then reset all the users usage data for the day at a given time (daily)
+export async function resetDailyUserUsageData() {
+  // This could be done in three ways:
+  // 1. checking a given arbitrary time server-side and reset all the users at the same time
+  // 2. we could add a time-zone to user entity and reset everytime a certain time-zone reaches midnight
+  // 3. we could execute the reset everytime the user does something while also checking the date
+}
+
+// Returns the trashbin ID given specific parameters
+export async function getBinID(longitude: number, latitude: number, type: string) {
+  try {
+    return await connection`
+      SELECT bn.bin_id
+      FROM trashbin bn
+      JOIN bin_type bt ON bt.type_id = bn.type
+      WHERE bt.type = ${type} AND ST_DWithin(
+        bn.location,
+        ST_SetSRID(ST_MakePoint(${longitude}, ${latitude}), 4326)::geography,
+        1
+      ) -- Gets all the bins in that position and in a radius of one meter
+      ORDER BY bn.location <-> ST_SetSRID(ST_MakePoint(${longitude}, ${latitude}), 4326)::geography -- Operand <-> returns the distance between two spatial values
+      LIMIT 1
+    `;
+  } catch (e) {
+    console.error("Bin ID fetch failure: ", e);
+    return null;
+  }
+}
+
+// Returns the user ID given specific parameters
+export async function getUserID(username: string) {
+  try {
+    return await connection`
+      SELECT user_id
+      FROM trash_user
+      WHERE username = ${username}
+    `;
+  } catch (e) {
+    console.error("User ID fetch failure: ", e);
+    return null;
+  }
+}
+
+// Returns the user review ID given specific parameters
+export async function getUserRevID(reviewed_user: string, reviewing_user: string, date_time: Date) {
+  try {
+    let [revedUsr] = await getUserID(reviewed_user);
+    let [revingUsr] = await getUserID(reviewing_user);
+
+    if (revedUsr.user_id === null || revingUsr.user_id === null) {
+      throw new Error("Cannot find one or more users");
+    }
+
+    return await connection`
+      SELECT user_rev_id
+      FROM user_review
+      WHERE
+        reviewed_user = ${revedUsr.user_id}
+        AND reviewing_user = ${revingUsr.user_id}
+        AND date_time >= ${date_time}
+        AND date_time <  ${new Date(date_time.getTime() + 1)}
+        ORDER BY date_time DESC
+        LIMIT 1
+    `;
+  } catch (e) {
+    console.error("User review ID fetch failure: ", e);
+    return null;
+  }
+}
+
+// Returns the bin revuew ID given specific parameters
+export async function getBinRevID(bin_long: number, bin_lat: number, bin_type:string, username: string, date_time: Date) {
+  try {
+    let [trashbin] = await getBinID(bin_long, bin_lat, bin_type);
+    let [user] = await getUserID(username);
+
+    if (trashbin.bin_id === null || user.user_id === null) {
+      throw new Error("Cannot find trashbin or user");
+    }
+
+    return await connection`
+      SELECT bin_rev_id
+      FROM bin_review
+      WHERE reviewed_bin = ${trashbin.bin_id}
+      AND reviewing_user = ${user.user_id}
+      AND reviewed_at >= ${date_time}
+      AND reviewed_at <  ${new Date(date_time.getTime() + 1)}
+      ORDER BY reviewed_at DESC
+      LIMIT 1
+    `;
+  } catch (e) {
+    console.error("Trashbin review ID fetch failure: ", e);
+    return null;
+  }
+}
+
+export async function getLatestUserRevID(reviewed_user: string) {
+  try {
+    const [revedUsr] = await getUserID(reviewed_user);
+
+    if (revedUsr.user_id === null) {
+      throw new Error("Cannot find user");
+    }
+
+    return await connection`
+      SELECT user_rev_id
+      FROM user_review
+      WHERE reviewed_user = ${revedUsr.user_id}
+      ORDER BY date_time DESC
+      LIMIT 1
+    `;
+  } catch (e) {
+    console.error("Latest trashbin review ID fetch failure: ", e);
+    return null;
+  }
+}
+
+export async function getLatestBinRevID(bin_long: number, bin_lat: number, bin_type: string) {
+  try {
+    const [trashbin] = await getBinID(bin_long, bin_lat, bin_type);
+
+    if (trashbin.bin_id === null) {
+      throw new Error("Cannot find trashbin");
+    }
+
+    return await connection`
+      SELECT bin_rev_id
+      FROM bin_review
+      WHERE reviewed_bin = ${trashbin.bin_id}
+      ORDER BY reviewed_at DESC
+      LIMIT 1
+    `;
+  } catch (e) {
+    console.error("Latest trashbin review ID fetch failure: ", e);
+    return null;
+  }
+}
+
+// This function returns all the public trashbin data given a specific ID
+export async function getBinData() {
+
+}
+
+// This function returns all the public user data given a specific ID
+export async function getUserData() {
+
+}
+
+// This function returns all the public bin review data given a specific ID
+export async function getBinRevData() {
+
+}
+
+// This function returns all the public user review data given a specific ID
+export async function getUserRevData() {
 
 }
 
