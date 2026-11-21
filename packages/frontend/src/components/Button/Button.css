@@ -1,0 +1,138 @@
+/* Base */
+.unibin-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: none;
+  outline: none;
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  font-family: inherit;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: #0f860f;
+  transition:
+    transform 0.15s cubic-bezier(0.2, 0, 0, 1),
+    box-shadow 0.25s ease,
+    background-color 0.2s ease,
+    color 0.2s ease;
+}
+
+.unibin-btn:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.unibin-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* --- Size --- */
+.unibin-btn--sm {
+  padding: 10px 14px;
+  font-size: 0.85rem;
+}
+
+.unibin-btn--md {
+  padding: 13px 22px;
+  font-size: 0.95rem;
+}
+
+.unibin-btn--lg {
+  padding: 24px;
+  font-size: 1.05rem;
+}
+
+/* --- 1. ICON: Bubble-like --- */
+.unibin-btn--icon {
+  border-radius: 50%;
+  aspect-ratio: 1 / 1;
+  padding: 12px;
+  background-color: rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow:
+    inset 6px 6px 14px rgba(74, 222, 128, 0.75),
+    inset -6px -6px 14px rgba(56, 189, 248, 0.75),
+    0 6px 18px rgba(0, 0, 0, 0.35);
+}
+
+.unibin-btn--icon.unibin-btn--lg {
+  padding: 16px;
+}
+
+/* --- 2. PRIMARY: Primary actions in form/drawer --- */
+.unibin-btn--primary {
+  border-radius: 16px;
+  background-color: rgba(22, 24, 23, 0.88);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow:
+    inset 6px 6px 16px rgba(74, 222, 128, 0.7),
+    inset -6px -6px 16px rgba(56, 189, 248, 0.7),
+    0 6px 18px rgba(0, 0, 0, 0.4);
+}
+
+/* --- 3. ACCENT: Big bubble for special actions --- */
+.unibin-btn--accent {
+  border-radius: 50%;
+  aspect-ratio: 1 / 1;
+  min-width: 150px;
+  text-align: center;
+  background-color: rgba(22, 24, 23, 0.88);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow:
+    inset 16px 14px 32px rgba(74, 222, 128, 0.92),
+    inset -16px -16px 32px rgba(56, 189, 248, 0.92),
+    0 10px 26px rgba(0, 0, 0, 0.48);
+}
+
+/* --- 4. NEUTRAL: Secondary actions (Annulla, Reset) --- */
+.unibin-btn--neutral {
+  border-radius: 16px;
+  background-color: rgba(255, 255, 255, 0.08);
+  color: #cbd5e1;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+}
+
+.unibin-btn--neutral:hover:not(:disabled) {
+  background-color: rgba(255, 255, 255, 0.15);
+  color: #ffffff;
+}
+
+/* --- ACTIVE (Different color from default version) --- */
+.unibin-btn--active:not(.unibin-btn--nav) {
+  background-color: rgba(37, 99, 235, 0.5);
+  color: #ffffff;
+  box-shadow:
+    inset 8px 8px 18px rgba(125, 211, 252, 0.95),
+    inset -8px -8px 20px rgba(29, 78, 216, 0.95),
+    0 0 16px rgba(59, 130, 246, 0.65);
+}
+
+/* --- 5. NAV: Transparent buttons for navigation bar with vertical format --- */
+.unibin-btn--nav {
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 16px;
+  border-radius: 14px;
+  background-color: transparent;
+  color: #64748b;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.unibin-btn--nav:hover:not(:disabled) {
+  color: #1e293b;
+  background-color: rgba(15, 23, 42, 0.04);
+}
+
+.unibin-btn--nav.unibin-btn--active {
+  color: #16a34a;
+  background-color: rgba(22, 163, 74, 0.08);
+}

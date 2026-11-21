@@ -1,0 +1,25 @@
+.unibin-bottom-nav {
+  position: relative;
+  flex-shrink: 0;
+  width: 100%;
+  z-index: 1100;
+  background-color: #ffffff;
+  border-top: 1px solid rgba(15, 23, 42, 0.08);
+  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.08);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.unibin-bottom-nav-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  max-width: 540px;
+  margin: 0 auto;
+  height: var(--bottom-nav-height);
+  padding: 0 12px;
+}
+
+.unibin-bottom-nav-inner > .unibin-btn--nav {
+  flex: 1;
+  max-width: 110px;
+}

@@ -1,0 +1,121 @@
+/* --- Div --- */
+.unibin-chip-group {
+  width: 100%;
+  pointer-events: auto;
+}
+
+/* Layout 1: Single orizontally oriented row with scroll */
+.unibin-chip-group--scroll {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.unibin-chip-group--scroll::-webkit-scrollbar {
+  display: none;
+}
+
+/* Layout 2: Multi-line grid */
+.unibin-chip-group--grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(135px, 1fr));
+  gap: 10px;
+}
+
+/* --- SINGLE ELEMENT (Chip) --- */
+.unibin-chip {
+  --glow-top: rgba(56, 189, 248, 0.85);
+  --glow-bottom: rgba(74, 222, 128, 0.85);
+
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 9px 16px;
+  border: none;
+  border-radius: 9999px;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  font-family: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+
+  /* Style */
+  color: #18181b;
+  background-color: rgba(255, 255, 255, 0.35);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+
+  box-shadow:
+    inset 0px 7px 12px -2px var(--glow-top),
+    inset 0px -7px 12px -2px var(--glow-bottom),
+    inset 5px 0px 10px -2px var(--glow-top),
+    inset -5px 0px 10px -2px var(--glow-bottom),
+    0 3px 10px rgba(0, 0, 0, 0.16);
+
+  transition:
+    transform 0.15s ease,
+    background-color 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.unibin-chip:active {
+  transform: scale(0.95);
+}
+
+.unibin-chip-icon {
+  display: inline-flex;
+  align-items: center;
+}
+
+.unibin-chip-group--grid .unibin-chip {
+  background-color: rgba(255, 255, 255, 0.82);
+  width: 100%;
+}
+
+/* Selected (ArkUI data-state="on") */
+.unibin-chip[data-state="on"] {
+  background-color: rgba(255, 255, 255, 0.92);
+  color: #09090b;
+  box-shadow:
+    inset 0px 9px 15px var(--glow-top),
+    inset 0px -9px 15px var(--glow-bottom),
+    0 0 0 2.5px #2563eb,
+    0 6px 16px rgba(37, 99, 235, 0.35);
+}
+
+/* --- Colours (divided by bin type --- */
+.unibin-chip--paper {
+  --glow-top: rgba(34, 211, 238, 0.85);
+  --glow-bottom: rgba(74, 222, 128, 0.9);
+  background-color: rgba(33, 189, 241, 0.2);
+}
+
+.unibin-chip--plastic {
+  --glow-top: rgba(163, 230, 53, 0.65);
+  --glow-bottom: rgba(245, 158, 11, 0.85);
+  background-color: rgba(241, 227, 33, 0.2);
+}
+
+.unibin-chip--batteries {
+  --glow-top: rgba(230, 71, 53, 0.65);
+  --glow-bottom: rgba(245, 158, 11, 0.85);
+  background-color: rgba(241, 54, 33, 0.2);
+}
+
+.unibin-chip--clothes {
+  --glow-top: rgba(168, 85, 247, 0.8);
+  --glow-bottom: rgba(251, 146, 60, 0.85);
+  background-color: rgba(241, 33, 238, 0.2);
+}
+
+.unibin-chip--ewaste {
+  --glow-top: rgba(124, 158, 172, 0.85);
+  --glow-bottom: rgba(169, 139, 195, 0.8);
+  background-color: rgba(93, 109, 114, 0.2);
+}

@@ -1,0 +1,76 @@
+.unibin-rank-badge {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 20px;
+  border-radius: 9999px;
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #111111;
+  letter-spacing: 0.01em;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.unibin-rank-badge-label {
+  position: relative;
+  z-index: 1;
+}
+
+/* 1. Re dei Monnezzari */
+.unibin-rank-badge--king {
+  background: linear-gradient(
+    90deg,
+    #d4a22a 0%,
+    #e5b842 32%,
+    #fff6d6 50%,
+    #e5b842 68%,
+    #d4a22a 100%
+  );
+  box-shadow: 0 0 18px 3px rgba(234, 179, 8, 0.65);
+}
+
+/* 2. Monnezzaro */
+.unibin-rank-badge--pro {
+  background: linear-gradient(
+    90deg,
+    #d4a22a 0%,
+    #e5b842 32%,
+    #fff6d6 50%,
+    #e5b842 68%,
+    #d4a22a 100%
+  );
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.15);
+}
+
+/* 3. Monnezzaro Jr */
+.unibin-rank-badge--jr {
+  background-color: #f3d27a;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+
+/* 4. Troll delle discariche */
+.unibin-rank-badge--troll {
+  background-color: #a3b85c;
+  background-image:
+    radial-gradient(#7d913e 1.5px, transparent 1.5px),
+    radial-gradient(#c2d482 1.2px, #a3b85c 1.2px);
+  background-size: 10px 10px;
+  background-position:
+    0 0,
+    5px 5px;
+}
+
+/* 5. Rifiuto della società */
+.unibin-rank-badge--trash {
+  background-color: #8c6643;
+  background-image:
+    radial-gradient(#5e4126 1.5px, transparent 1.5px),
+    radial-gradient(#a87f58 1.2px, #8c6643 1.2px);
+  background-size: 9px 9px;
+  background-position:
+    0 0,
+    4px 4px;
+  filter: url(#unibin-trash-edge);
+}

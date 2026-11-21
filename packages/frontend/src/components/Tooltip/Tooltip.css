@@ -1,0 +1,36 @@
+.unibin-tooltip {
+  z-index: 1500; /* Sopra i controlli della mappa Leaflet */
+  padding: 6px 12px;
+  border-radius: 10px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: #ffffff;
+
+  /* Effetto vetro coordinato con i bottoni */
+  background-color: rgba(22, 24, 23, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(74, 222, 128, 0.35);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+
+  /* Animazione fluida gestita dagli attributi data-state di Ark UI */
+  transition:
+    opacity 0.15s ease,
+    transform 0.15s ease;
+}
+
+.unibin-tooltip[data-state="open"] {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.unibin-tooltip[data-state="closed"] {
+  opacity: 0;
+  transform: scale(0.95);
+}
+
+/* Stile della freccetta */
+.unibin-tooltip-arrow {
+  --arrow-size: 8px;
+  --arrow-background: rgba(22, 24, 23, 0.85);
+}

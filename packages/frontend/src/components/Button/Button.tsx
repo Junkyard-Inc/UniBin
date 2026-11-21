@@ -1,34 +1,46 @@
-import IconButton from '@mui/material/IconButton';
-import React from 'react';
+import React, { forwardRef } from "react";
+import "./Button.css";
 
-interface CustomIconButtonProps {
-  onClick: () => void;
-  icon: React.ReactNode;
-  label: string; 
-  isActive?: boolean; 
+export type ButtonVariant = "primary" | "accent" | "neutral" | "icon" | "nav";
+export type ButtonSize = "sm" | "md" | "lg";
+
+export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+  variant?: ButtonVariant;
+  size?: ButtonSize;
+  isActive?: boolean;
+  children: React.ReactNode;
 }
 
-export function CustomIconButton({ onClick, icon, label, isActive = false }: CustomIconButtonProps) {
-  return (
-			<IconButton
-				onClick={onClick}
-				aria-label={label}
-				style={{
-          backgroundColor: isActive ? "#2563eb" : "#ffffff",
-          color: isActive ? "#ffffff" : "#1f2937",
-          boxShadow: "0 4px 10px rgba(0,0,0,0.15)",
-          padding: "12px",
-          transition: "all 0.2s ease-in-out",
-        }}
-				sx={{
-          "&:hover": {
-            backgroundColor: isActive ? "#1d4ed8" : "#f3f4f6",
-          },
-        }}
-			>
-				{icon}
-			</IconButton>
-  );
-}
+export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
+  (
+    {
+      variant = "primary",
+      size = "md",
+      isActive = false,
+      className = "",
+      type = "button",
+      children,
+      ...props
+    },
+    ref,
+  ) => {
+    const classes = [
+      "unibin-btn",
+      `unibin-btn--${variant}`,
+      `unibin-btn--${size}`,
+      isActive ? "unibin-btn--active" : "",
+      className,
+    ]
+      .filter(Boolean)
+      .join(" ");
 
-export default CustomIconButton;
+    return (
+      <button ref={ref} type={type} className={classes} {...props}>
+        {children}
+      </button>
+    );
+  },
+);
+
+Button.displayName = "Button";
+export default Button;

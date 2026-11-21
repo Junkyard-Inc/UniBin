@@ -1,0 +1,92 @@
+.unibin-upload-root {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.unibin-upload-label {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #1e1e1e;
+}
+
+.unibin-upload-dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 20px 16px;
+  border-radius: 18px;
+  border: 2px dashed rgba(30, 30, 30, 0.25);
+  background-color: rgba(255, 255, 255, 0.55);
+  transition:
+    border-color 0.2s ease,
+    background-color 0.2s ease;
+}
+
+.unibin-upload-dropzone[data-dragging] {
+  border-color: #2563eb;
+  background-color: rgba(37, 99, 235, 0.08);
+}
+
+.unibin-upload-icon-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background-color: rgba(74, 222, 128, 0.2);
+  color: #15803d;
+}
+
+.unibin-upload-helper {
+  font-size: 0.78rem;
+  color: #52525b;
+  text-align: center;
+}
+
+.unibin-upload-preview-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.unibin-upload-item {
+  position: relative;
+  border-radius: 18px;
+  overflow: hidden;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  background-color: #f4f4f5;
+}
+
+.unibin-upload-preview-img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+}
+
+.unibin-upload-item-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  background-color: rgba(255, 255, 255, 0.9);
+}
+
+.unibin-upload-item-name {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #1e1e1e;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.unibin-upload-delete {
+  padding: 6px;
+  color: #dc2626;
+}
