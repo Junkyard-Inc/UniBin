@@ -1,0 +1,17 @@
+.wip-banner {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  margin-top: 35dvh;
+  padding: 0 100px;
+}
+
+.wip-title {
+  font-size: 1.5rem;
+}
+.wip-description {
+  font-size: 1rem;
+  text-align: justify;
+}
