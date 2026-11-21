@@ -104,3 +104,16 @@ export async function reviewCount(): Promise<number> {
   const [r] = await connection`SELECT COUNT(*)::int AS total FROM bin_review`;
   return r!.total;
 }
+
+async function backdate(username: string, days: number) {
+  await connection`
+    UPDATE trash_user
+    SET last_data_usage_reset = now() - make_interval(days => ${days}::int)
+    WHERE username = ${username}
+  `;
+}
+
+async function tzOf(username: string) {
+  const [r] = await connection`SELECT timezone FROM trash_user WHERE username = ${username}`;
+  return r!.timezone;
+}

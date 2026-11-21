@@ -4,6 +4,10 @@ export const connection = new SQL(process.env.DATABASE_URL!);
 
 //WARN: PAY ATTENTION to SQL Injections
 
+//####################################################################################################################################
+//------------------------------------------------## Bin Related Functions ##---------------------------------------------------------
+//####################################################################################################################################
+
 // This function must check the user's daily limits then it should let the user insert the record into the db
 export async function reportNewBin(longitude: number, latitude: number, state: string, type: string, reporting_user: string) {
 
@@ -18,6 +22,7 @@ export async function reportNewBin(longitude: number, latitude: number, state: s
   } else if (check.new_bins_reported_today === 0) {
     advice = "You reached your daily limit for new bins report";
   } else {
+    //TODO: Integrate getBinID()
     //checking first if the bin is already in the db with status "Inactive"
     const [binExists] = await connection`
       SELECT bn.bin_id, bs.status
@@ -130,6 +135,27 @@ export async function reportGroupOfBins(longitude: number, latitude: number, sta
   return `Group reported: ${added} added, ${reactivated} reactivated, ${existing} already existed`;
 }
 
+// This function must return the position of all the nearby bins given a certain radius around the user
+export async function getNearBinsPosition(usr_long: number, usr_lat: number, radius: number) {
+  // Returning an array containing longitude, latitude and distance from the position of nearby bins
+  return await connection`
+    SELECT
+      ST_X(location::geometry) AS longitude,
+      ST_Y(location::geometry) AS latitude,
+      ST_Distance(
+        location,
+        ST_SetSRID(ST_MakePoint(${usr_long}, ${usr_lat}), 4326)::geography
+      )::float AS distance_m
+    FROM trashbin
+    WHERE ST_DWithin(
+      location,
+      ST_SetSRID(ST_MakePoint(${usr_long}, ${usr_lat}), 4326)::geography,
+      ${radius}
+    )
+    ORDER BY distance_m
+  `;
+}
+
 // This function must check first the user's daily limits, second if the user is near the bin and then if that is true it should insert the record into the db
 export async function reviewBin(bin_long: number, bin_lat: number, type:string, reviewing_user: string, reported_state: string) {
   const [check] = await connection`
@@ -212,6 +238,132 @@ export async function notUsefulBinRev(bin_long: number, bin_lat: number, bin_typ
   }
 }
 
+//TODO: Integrate getBinID()
+// This function must "remove" a bin from the db if the latest reported state is
+export async function removeBin(bin_long: number, bin_lat: number, type: string) {
+  // This query gets the latest review of a given trashbin
+  const [rev_bin] = await connection`
+    WITH selected_bin AS (
+      SELECT bn.bin_id
+      FROM trashbin bn
+      JOIN bin_type bt ON bt.type_id = bn.type
+      WHERE bt.type = ${type} AND ST_DWithin(
+        bn.location,
+        ST_SetSRID(ST_MakePoint(${bin_long}, ${bin_lat}), 4326)::geography,
+        1
+      ) -- Gets all the bins in that position and in a radius of one meter
+      ORDER BY bn.location <-> ST_SetSRID(ST_MakePoint(${bin_long}, ${bin_lat}), 4326)::geography -- Operand <-> returns the distance between two spatial values
+      LIMIT 1
+    )
+    SELECT br.reviewed_bin, br.reliable, bs.state_id, bs.state, br.reviewed_at, (br.reviewed_at < now() - INTERVAL '30 days') AS is_stale
+    FROM bin_review br
+    JOIN selected_bin sb ON sb.bin_id = br.reviewed_bin
+    JOIN bin_state bs ON bs.state_id = br.reported_state
+    ORDER BY br.reviewed_at DESC
+    LIMIT 1
+  `;
+  // is_stale is used to check if the review the query found is older than 30 days
+  if (!rev_bin) {
+    return "An error has occured";
+  } else if (rev_bin.is_stale && rev_bin.state === "Removed" && rev_bin.reliable) {
+    try {
+      await connection`
+        UPDATE trashbin
+        SET status = (SELECT status_id FROM bin_status WHERE status='Inactive')
+        WHERE bin_id = ${rev_bin.reviewed_bin}
+      `;
+      return "Removal successful";
+    } catch (e) {
+      console.error("Bin removal failed: ", e);
+      return "Bin removal unsuccessful";
+    }
+  }
+}
+
+// Returns the trashbin ID given specific parameters
+export async function getBinID(longitude: number, latitude: number, type: string) {
+  try {
+    return await connection`
+      SELECT bn.bin_id
+      FROM trashbin bn
+      JOIN bin_type bt ON bt.type_id = bn.type
+      WHERE bt.type = ${type} AND ST_DWithin(
+        bn.location,
+        ST_SetSRID(ST_MakePoint(${longitude}, ${latitude}), 4326)::geography,
+        1
+      ) -- Gets all the bins in that position and in a radius of one meter
+      ORDER BY bn.location <-> ST_SetSRID(ST_MakePoint(${longitude}, ${latitude}), 4326)::geography -- Operand <-> returns the distance between two spatial values
+      LIMIT 1
+    `;
+  } catch (e) {
+    console.error("Bin ID fetch failure: ", e);
+    return null;
+  }
+}
+
+// Returns the bin revuew ID given specific parameters
+export async function getBinRevID(bin_long: number, bin_lat: number, bin_type:string, username: string, date_time: Date) {
+  try {
+    let [trashbin] = await getBinID(bin_long, bin_lat, bin_type);
+    let [user] = await getUserID(username);
+
+    if (trashbin.bin_id === null || user.user_id === null) {
+      throw new Error("Cannot find trashbin or user");
+    }
+
+    return await connection`
+      SELECT bin_rev_id
+      FROM bin_review
+      WHERE reviewed_bin = ${trashbin.bin_id}
+      AND reviewing_user = ${user.user_id}
+      AND reviewed_at >= ${date_time}
+      AND reviewed_at <  ${new Date(date_time.getTime() + 1)}
+      ORDER BY reviewed_at DESC
+      LIMIT 1
+    `;
+  } catch (e) {
+    console.error("Trashbin review ID fetch failure: ", e);
+    return null;
+  }
+}
+
+export async function getLatestBinRevID(bin_long: number, bin_lat: number, bin_type: string) {
+  try {
+    const [trashbin] = await getBinID(bin_long, bin_lat, bin_type);
+
+    if (trashbin.bin_id === null) {
+      throw new Error("Cannot find trashbin");
+    }
+
+    return await connection`
+      SELECT bin_rev_id
+      FROM bin_review
+      WHERE reviewed_bin = ${trashbin.bin_id}
+      ORDER BY reviewed_at DESC
+      LIMIT 1
+    `;
+  } catch (e) {
+    console.error("Latest trashbin review ID fetch failure: ", e);
+    return null;
+  }
+}
+
+// This function returns all the public trashbin data given a specific ID
+export async function getBinData() {
+
+}
+
+// This function returns all the public bin review data given a specific ID
+export async function getBinRevData() {
+
+}
+
+//TODO: Functions for bins search with filters
+
+//####################################################################################################################################
+//------------------------------------------------## User Related Functions ##--------------------------------------------------------
+//####################################################################################################################################
+
 // This function must check the user's daily limits and then if the user is inside the limits it should insert the record into the db
 export async function reviewUser(title: string, body: string, vote: number, reviewed_user: string, reviewing_user: string) {
   let advice = "empty";
@@ -264,78 +416,16 @@ export async function reviewUser(title: string, body: string, vote: number, revi
   return advice;
 }
 
-// This function must return the position of all the nearby bins given a certain radius around the user
-export async function getNearBinsPosition(usr_long: number, usr_lat: number, radius: number) {
-  // Returning an array containing longitude, latitude and distance from the position of nearby bins
-  return await connection`
-    SELECT
-      ST_X(location::geometry) AS longitude,
-      ST_Y(location::geometry) AS latitude,
-      ST_Distance(
-        location,
-        ST_SetSRID(ST_MakePoint(${usr_long}, ${usr_lat}), 4326)::geography
-      )::float AS distance_m
-    FROM trashbin
-    WHERE ST_DWithin(
-      location,
-      ST_SetSRID(ST_MakePoint(${usr_long}, ${usr_lat}), 4326)::geography,
-      ${radius}
-    )
-    ORDER BY distance_m
-  `;
-}
-
 // This function updates the bin state based off of the recent bin reviews
 // export async function updateBinState(bin_long: number, bin_lat: number, type: number) {
   // Is it really necessary?
 // }
 
-// This function must "remove" a bin from the db if the latest reported state is
-export async function removeBin(bin_long: number, bin_lat: number, type: string) {
-  // This query gets the latest review of a given trashbin
-  const [rev_bin] = await connection`
-    WITH selected_bin AS (
-      SELECT bn.bin_id
-      FROM trashbin bn
-      JOIN bin_type bt ON bt.type_id = bn.type
-      WHERE bt.type = ${type} AND ST_DWithin(
-        bn.location,
-        ST_SetSRID(ST_MakePoint(${bin_long}, ${bin_lat}), 4326)::geography,
-        1
-      ) -- Gets all the bins in that position and in a radius of one meter
-      ORDER BY bn.location <-> ST_SetSRID(ST_MakePoint(${bin_long}, ${bin_lat}), 4326)::geography -- Operand <-> returns the distance between two spatial values
-      LIMIT 1
-    )
-    SELECT br.reviewed_bin, br.reliable, bs.state_id, bs.state, br.reviewed_at, (br.reviewed_at < now() - INTERVAL '30 days') AS is_stale
-    FROM bin_review br
-    JOIN selected_bin sb ON sb.bin_id = br.reviewed_bin
-    JOIN bin_state bs ON bs.state_id = br.reported_state
-    ORDER BY br.reviewed_at DESC
-    LIMIT 1
-  `;
-  // is_stale is used to check if the review the query found is older than 30 days
-  if (!rev_bin) {
-    return "An error has occured";
-  } else if (rev_bin.is_stale && rev_bin.state === "Removed" && rev_bin.reliable) {
-    try {
-      await connection`
-        UPDATE trashbin
-        SET status = (SELECT status_id FROM bin_status WHERE status='Inactive')
-        WHERE bin_id = ${rev_bin.reviewed_bin}
-      `;
-      return "Removal successful";
-    } catch (e) {
-      console.error("Bin removal failed: ", e);
-      return "Bin removal unsuccessful";
-    }
-  }
-}
-
 // This function must let a new user register to the site
 //  First we check if the username already exists
 //  Then we check if the email is correct
 //  Then we check the password and if it respects the criteria we hash it
-export async function registerNewUser(email: string, username: string, password: string) {
+export async function registerNewUser(email: string, username: string, password: string, timezone?: string) {
   let em_flag = false; // if email is already in use =true
   let usr_flag = false; // if username already in use =true
   let pw_len_flag = false; // if password is too short =true
@@ -451,6 +541,8 @@ export async function userLogin(username: string, password: string) {
   }
 }
 
+//TODO: Understand where to use this function and evaluate removal of usage data reset
+
 // This function must calculate a user's rank based off of certain criteria
 // This function is called when a user gets reviewed or when a bin bin review by the same user gets a feedback
 export async function computeUserRank(userID: number) {
@@ -475,8 +567,6 @@ export async function computeUserRank(userID: number) {
 
   let total_pts: number = 0;
   let multiplier: number = 0;
-  const userRanks: readonly string[] = ["Rifiuto Della Società", "Troll Delle Discariche", "Monnezzaro Jr", "Monnezzaro", "Re Dei Monnezzari"];
-  let usrRank: string = "";
 
   const [bin_rep] = await connection`
     SELECT COUNT(*)::int AS total
@@ -526,7 +616,7 @@ export async function computeUserRank(userID: number) {
     `;
 
   const [n_users_reviewed] = await connection`
-    SELECT COUNT(*) AS total
+    SELECT COUNT(*)::int AS total
     FROM user_review
     WHERE reviewing_user = ${userID}
     `;
@@ -554,51 +644,100 @@ export async function computeUserRank(userID: number) {
 
   console.log("total points:", total_pts);
 
-  for (let i = 0; i < 5; i++) {
-    if (total_pts >= points[i]?.minimum_score) {
-      usrRank = userRanks[i] ?? "";
-    }
+  const ranks = await connection`
+    SELECT rank_id, minimum_score FROM user_rank ORDER BY minimum_score ASC
+  `;
+  let rankId: number | null = null;
+  for (const r of ranks) {
+    if (total_pts >= r.minimum_score) rankId = r.rank_id;
   }
 
-  await connection`
-    UPDATE trash_user
-    SET
-      rank = (SELECT rank_id FROM user_rank WHERE rank_name = ${usrRank}),
-      new_bins_reported_today = (SELECT daily_new_bins_report FROM user_rank WHERE rank_name = ${usrRank}),
-      bins_reported_today = (SELECT daily_bins_report FROM user_rank WHERE rank_name = ${usrRank}),
-      users_reviewed_today = (SELECT daily_users_review FROM user_rank WHERE rank_name = ${usrRank})
-    WHERE user_id = ${userID}
+  //for (let i = 0; i < 5; i++) {
+    //if (total_pts >= points[i]?.minimum_score) {
+      //usrRank = userRanks[i] ?? "";
+    //}
+  //}
+
+  if (rankId !== null) {
+    await connection`
+      UPDATE trash_user
+      SET
+        rank = (SELECT rank_id FROM user_rank WHERE rank_name = ${rankId}),
+        new_bins_reported_today = (SELECT daily_new_bins_report FROM user_rank WHERE rank_name = ${rankId}),
+        bins_reported_today = (SELECT daily_bins_report FROM user_rank WHERE rank_name = ${rankId}),
+        users_reviewed_today = (SELECT daily_users_review FROM user_rank WHERE rank_name = ${rankId})
+      WHERE user_id = ${userID}
     `;
+  } else {
+    return "Calculation failed";
+  }
 
 }
 
-// This function must periodically check what time it is and then reset all the users usage data for the day at a given time (daily)
-export async function resetDailyUserUsageData() {
+// True if Postgres knows this IANA name (e.g. "Europe/Rome").
+// An invalid name inside AT TIME ZONE would make the reset query fail for everyone.
+export async function isValidTimezone(tz: string): Promise<boolean> {
+  const [r] = await connection`
+    SELECT EXISTS (SELECT 1 FROM pg_timezone_names WHERE name = ${tz}) AS ok
+  `;
+  return r!.ok;
+}
+
+// Restores the daily counters to the user's rank limits for every user whose last
+// reset happened on an earlier calendar day IN THEIR OWN TIMEZONE.
+// Advice: safe to call any number of times.
+// With a username it resets only that user.
+// Returns how many users were reset.
+export async function resetDailyUserData(username?: string): Promise<number> {
   // This could be done in three ways:
   // 1. checking a given arbitrary time server-side and reset all the users at the same time
   // 2. we could add a time-zone to user entity and reset everytime a certain time-zone reaches midnight
   // 3. we could execute the reset everytime the user does something while also checking the date
+  const rows = await connection`
+    UPDATE trash_user u
+    SET new_bins_reported_today = r.daily_new_bins_report,
+        bins_reported_today     = r.daily_bins_report,
+        users_reviewed_today    = r.daily_users_review,
+        last_data_usage_reset   = now()
+    FROM user_rank r
+    WHERE r.rank_id = u.rank
+      AND (u.last_data_usage_reset AT TIME ZONE u.timezone)::date < (now() AT TIME ZONE u.timezone)::date
+      AND (${username ?? null}::text IS NULL OR u.username = ${username ?? null})
+    RETURNING u.user_id
+  `;
+  return rows.length;
 }
 
-// Returns the trashbin ID given specific parameters
-export async function getBinID(longitude: number, latitude: number, type: string) {
-  try {
-    return await connection`
-      SELECT bn.bin_id
-      FROM trashbin bn
-      JOIN bin_type bt ON bt.type_id = bn.type
-      WHERE bt.type = ${type} AND ST_DWithin(
-        bn.location,
-        ST_SetSRID(ST_MakePoint(${longitude}, ${latitude}), 4326)::geography,
-        1
-      ) -- Gets all the bins in that position and in a radius of one meter
-      ORDER BY bn.location <-> ST_SetSRID(ST_MakePoint(${longitude}, ${latitude}), 4326)::geography -- Operand <-> returns the distance between two spatial values
-      LIMIT 1
-    `;
-  } catch (e) {
-    console.error("Bin ID fetch failure: ", e);
-    return null;
+// Changes the user's timezone.
+// Returns a message describing the outcome.
+export async function updateUserTimezone(username: string, timezone: string) {
+  const [user] = await connection`
+    SELECT timezone FROM trash_user WHERE username = ${username}
+  `;
+  if (!user) return "No user found";
+  if (user.timezone === timezone) return "Timezone unchanged"; // the usual case: one query only
+  if (!(await isValidTimezone(timezone))) return "Invalid timezone";
+
+  await resetDailyUserData(username); // settle a pending reset under the OLD zone first
+  await connection`
+    UPDATE trash_user
+    SET timezone = ${timezone},
+        last_data_usage_reset = now()   -- no free extra reset right after switching
+    WHERE username = ${username}
+  `;
+  return "Timezone updated";
+}
+
+//TODO: Understand where to use this function and evaluate removal of usage data reset
+
+// Call this once at the start of every request that reads or spends usage data.
+// A rejected or invalid timezone is ignored on purpose: it must never fail the request.
+// Routes: call startUserRequest first in every route that touches usage data
+export async function startUserRequest(username: string, timezone?: string) {
+  if (timezone) {
+    await updateUserTimezone(username, timezone);
   }
+  await resetDailyUserData(username);
 }
 
 // Returns the user ID given specific parameters
@@ -642,32 +781,6 @@ export async function getUserRevID(reviewed_user: string, reviewing_user: string
   }
 }
 
-// Returns the bin revuew ID given specific parameters
-export async function getBinRevID(bin_long: number, bin_lat: number, bin_type:string, username: string, date_time: Date) {
-  try {
-    let [trashbin] = await getBinID(bin_long, bin_lat, bin_type);
-    let [user] = await getUserID(username);
-
-    if (trashbin.bin_id === null || user.user_id === null) {
-      throw new Error("Cannot find trashbin or user");
-    }
-
-    return await connection`
-      SELECT bin_rev_id
-      FROM bin_review
-      WHERE reviewed_bin = ${trashbin.bin_id}
-      AND reviewing_user = ${user.user_id}
-      AND reviewed_at >= ${date_time}
-      AND reviewed_at <  ${new Date(date_time.getTime() + 1)}
-      ORDER BY reviewed_at DESC
-      LIMIT 1
-    `;
-  } catch (e) {
-    console.error("Trashbin review ID fetch failure: ", e);
-    return null;
-  }
-}
-
 export async function getLatestUserRevID(reviewed_user: string) {
   try {
     const [revedUsr] = await getUserID(reviewed_user);
@@ -689,39 +802,8 @@ export async function getLatestUserRevID(reviewed_user: string) {
   }
 }
 
-export async function getLatestBinRevID(bin_long: number, bin_lat: number, bin_type: string) {
-  try {
-    const [trashbin] = await getBinID(bin_long, bin_lat, bin_type);
-
-    if (trashbin.bin_id === null) {
-      throw new Error("Cannot find trashbin");
-    }
-
-    return await connection`
-      SELECT bin_rev_id
-      FROM bin_review
-      WHERE reviewed_bin = ${trashbin.bin_id}
-      ORDER BY reviewed_at DESC
-      LIMIT 1
-    `;
-  } catch (e) {
-    console.error("Latest trashbin review ID fetch failure: ", e);
-    return null;
-  }
-}
-
-// This function returns all the public trashbin data given a specific ID
-export async function getBinData() {
-
-}
-
 // This function returns all the public user data given a specific ID
 export async function getUserData() {
-
-}
-
-// This function returns all the public bin review data given a specific ID
-export async function getBinRevData() {
 
 }
 
@@ -733,5 +815,3 @@ export async function getUserRevData() {
 export async function serverRequestsThrottling() {
 
 }
-
-// TO-BE_ADDED: Functions for bins search with filters

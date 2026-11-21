@@ -720,12 +720,201 @@ describe("computeUserRank", () => {
   });
 });
 
+describe("resetDailyUserData", () => {
+  async function limits() {
+    const [r] = await connection`
+      SELECT daily_new_bins_report AS nb, daily_bins_report AS br, daily_users_review AS ur
+      FROM user_rank WHERE rank_name = 'Rifiuto Della Società'
+    `;
+    return r!;
+  }
+
+  test("restores the rank limits for a user whose last reset was yesterday", async () => {
+    await createUser("alice", { newBins: 0, binReviews: 0, userReviews: 0 });
+    await backdate("alice", 1);
+
+    expect(await resetDailyUserData()).toBe(1);
+
+    const c = await counters("alice");
+    const l = await limits();
+    expect([c.new_bins, c.bin_reviews, c.user_reviews]).toEqual([l.nb, l.br, l.ur]);
+  });
+
+  test("does not touch a user already reset today", async () => {
+    await createUser("alice", { newBins: 3, binReviews: 3, userReviews: 3 });
+
+    expect(await resetDailyUserData()).toBe(0);
+    expect((await counters("alice")).new_bins).toBe(3);
+  });
+
+  test("is idempotent: a second run changes nothing", async () => {
+    await createUser("alice", { newBins: 0 });
+    await backdate("alice", 1);
+
+    await resetDailyUserData();
+    expect(await resetDailyUserData()).toBe(0);
+  });
+
+  test("with a username, resets only that user", async () => {
+    await createUser("alice", { newBins: 0 });
+    await createUser("bob", { newBins: 0 });
+    await backdate("alice", 1);
+    await backdate("bob", 1);
+
+    await resetDailyUserData("alice");
+
+    expect((await counters("alice")).new_bins).toBeGreaterThan(0);
+    expect((await counters("bob")).new_bins).toBe(0);
+  });
+
+  test("uses each user's own rank limits", async () => {
+    await createUser("alice", { newBins: 0 });
+    await backdate("alice", 1);
+    await connection`
+      UPDATE trash_user
+      SET rank = (SELECT rank_id FROM user_rank WHERE rank_name = 'Re Dei Monnezzari')
+      WHERE username = 'alice'
+    `;
+
+    await resetDailyUserData("alice");
+
+    const [top] = await connection`
+      SELECT daily_new_bins_report AS nb FROM user_rank WHERE rank_name = 'Re Dei Monnezzari'
+    `;
+    expect((await counters("alice")).new_bins).toBe(top!.nb);
+  });
+
+  test("the reset follows the user's own midnight", async () => {
+    await createUser("alice", { newBins: 0 });
+    await connection`UPDATE trash_user SET timezone = 'Pacific/Kiritimati'`;
+
+    // last reset exactly at the start of today in the user's zone: not due
+    await connection`
+      UPDATE trash_user
+      SET last_data_usage_reset =
+        date_trunc('day', now() AT TIME ZONE timezone) AT TIME ZONE timezone
+    `;
+    expect(await resetDailyUserData()).toBe(0);
+
+    // one second before that midnight: due
+    await connection`
+      UPDATE trash_user SET last_data_usage_reset = last_data_usage_reset - INTERVAL '1 second'
+    `;
+    expect(await resetDailyUserData()).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe("timezone", () => {
+  test("new users get the default timezone", async () => {
+    await registerNewUser("a@test.com", "alice", "Passw0rd!");
+    expect(await tzOf("alice")).toBe("Europe/Rome");
+  });
+
+  test("registration stores a valid timezone", async () => {
+    await registerNewUser("a@test.com", "alice", "Passw0rd!", "America/New_York");
+    expect(await tzOf("alice")).toBe("America/New_York");
+  });
+
+  test("registration falls back to the default for an invalid timezone", async () => {
+    const res = await registerNewUser("a@test.com", "alice", "Passw0rd!", "Not/AZone");
+    expect(res).toBe("User added successfully!"); // an invalid zone does not block registration
+    expect(await tzOf("alice")).toBe("Europe/Rome");
+  });
+
+  test("updates the timezone", async () => {
+    await createUser("alice");
+
+    expect(await updateUserTimezone("alice", "Asia/Tokyo")).toBe("Timezone updated");
+    expect(await tzOf("alice")).toBe("Asia/Tokyo");
+  });
+
+  test("rejects an invalid timezone and keeps the old one", async () => {
+    await createUser("alice");
+
+    expect(await updateUserTimezone("alice", "Not/AZone")).toBe("Invalid timezone");
+    expect(await tzOf("alice")).toBe("Europe/Rome");
+  });
+
+  test("reports unchanged and unknown users", async () => {
+    await createUser("alice");
+
+    expect(await updateUserTimezone("alice", "Europe/Rome")).toBe("Timezone unchanged");
+    expect(await updateUserTimezone("ghost", "Asia/Tokyo")).toBe("No user found");
+  });
+
+  test("a change does not give a free reset", async () => {
+    await createUser("alice", { newBins: 0 });
+
+    await updateUserTimezone("alice", "Pacific/Honolulu");
+    expect(await resetDailyUserData()).toBe(0);
+    expect((await counters("alice")).new_bins).toBe(0);
+  });
+
+  test("a change settles a pending reset under the old zone first", async () => {
+    await createUser("alice", { newBins: 0 });
+    await backdate("alice", 1);
+
+    await updateUserTimezone("alice", "Asia/Tokyo");
+    expect((await counters("alice")).new_bins).toBeGreaterThan(0);
+  });
+
+  test("login stores the timezone only after a correct password", async () => {
+    await createUser("alice", { password: "Passw0rd!" });
+
+    await userLogin("alice", "wrong", "Asia/Tokyo");
+    expect(await tzOf("alice")).toBe("Europe/Rome");
+
+    await userLogin("alice", "Passw0rd!", "Asia/Tokyo");
+    expect(await tzOf("alice")).toBe("Asia/Tokyo");
+  });
+
+  test("login still works with no timezone", async () => {
+    await createUser("alice", { password: "Passw0rd!" });
+    expect(await userLogin("alice", "Passw0rd!")).toBe("Auth successfull");
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe("startUserRequest", () => {
+  test("resets a due user even without a timezone", async () => {
+    await createUser("alice", { newBins: 0 });
+    await backdate("alice", 1);
+
+    await startUserRequest("alice");
+    expect((await counters("alice")).new_bins).toBeGreaterThan(0);
+  });
+
+  test("applies a new timezone and resets under the old one first", async () => {
+    await createUser("alice", { newBins: 0 });
+    await backdate("alice", 1);
+
+    await startUserRequest("alice", "Asia/Tokyo");
+
+    expect(await tzOf("alice")).toBe("Asia/Tokyo");
+    expect((await counters("alice")).new_bins).toBeGreaterThan(0);
+  });
+
+  test("an invalid timezone is ignored and the reset still runs", async () => {
+    await createUser("alice", { newBins: 0 });
+    await backdate("alice", 1);
+
+    await startUserRequest("alice", "Not/AZone");
+
+    expect(await tzOf("alice")).toBe("Europe/Rome");
+    expect((await counters("alice")).new_bins).toBeGreaterThan(0);
+  });
+
+  test("does nothing harmful for a user who is not due", async () => {
+    await createUser("alice", { newBins: 2 });
+
+    await startUserRequest("alice", "Europe/Rome");
+    expect((await counters("alice")).new_bins).toBe(2);
+  });
+});
+
 // ---------------------------------------------------------------------------
 describe("not implemented yet", () => {
-  (test.todo as any)("resetDailyUserData resets counters to the rank limits once per day");
-  (test.todo as any)("reportGroupOfBins reports several bins at one position");
-  (test.todo as any)("getBinData returns the data of a requested bin");
-  (test.todo as any)("resetDailyUserData resets counters to the rank limits once per day");
   (test.todo as any)("reportGroupOfBins reports several bins at one position");
   (test.todo as any)("getBinData returns the data of a requested bin");
 });
