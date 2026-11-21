@@ -1,63 +1,140 @@
-import { IconButton, Tooltip } from "@mui/material";
-import MyLocationIcon from "@mui/icons-material/MyLocation";
-import GpsNotFixedIcon from "@mui/icons-material/GpsNotFixed";
-import FilterListIcon from "@mui/icons-material/FilterList";
+import {
+  LocateFixed,
+  Locate,
+  SlidersHorizontal,
+  Plus,
+  Box,
+  Droplet,
+  Battery,
+  Feather,
+  Tv,
+} from "lucide-react";
+import Button from "../../../components/Button/Button";
+import ChipGroup, {
+  type ChipItem,
+} from "../../../components/ChipGroup/ChipGroup";
+import Tooltip from "../../../components/Tooltip/Tooltip";
+import { UI_TEXT } from "../../../constants/uiText";
 import "./MapControls.css";
+
+const FILTER_ITEMS: ChipItem[] = [
+  {
+    value: "paper",
+    label: UI_TEXT.categories.paper,
+    icon: <Box size={18} />,
+    tint: "paper",
+  },
+  {
+    value: "plastic",
+    label: UI_TEXT.categories.plastic,
+    icon: <Droplet size={18} />,
+    tint: "plastic",
+  },
+  {
+    value: "batteries",
+    label: UI_TEXT.categories.batteries,
+    icon: <Battery size={18} />,
+    tint: "batteries",
+  },
+  {
+    value: "clothes",
+    label: UI_TEXT.categories.clothes,
+    icon: <Feather size={18} />,
+    tint: "clothes",
+  },
+  {
+    value: "ewaste",
+    label: UI_TEXT.categories.ewaste,
+    icon: <Tv size={18} />,
+    tint: "ewaste",
+  },
+];
 
 interface MapControlsProps {
   isFollowing: boolean;
+  selectedCategories: string[];
+  onSelectCategories: (categories: string[]) => void;
   onRecenter: () => void;
   onOpenFilters: () => void;
-  //onAddBin?: () => void; // TODO: option for logged Users to add a bin
-  //isLoggedIn?: boolean;  // TODO: flag to show or hide functionalities based on user authentication
+  onAddBin: () => void;
 }
 
 export function MapControls({
   isFollowing,
+  selectedCategories,
+  onSelectCategories,
   onRecenter,
   onOpenFilters,
+  onAddBin,
 }: MapControlsProps) {
+  const hasActiveFilters = selectedCategories.length > 0;
+
   return (
     <div className="ui-overlay">
-      {/* Top controls (es. Filters) */}
+      {/* Top controls (Logo + Filters) */}
       <div className="controls-top-section">
         <div className="top-bar">
-          <h1 className="bitcount-logo">UNIBIN</h1>
+          <h1 className="bitcount-logo">{UI_TEXT.common.appName}</h1>
         </div>
+
+        <ChipGroup
+          items={FILTER_ITEMS}
+          value={selectedCategories}
+          onValueChange={onSelectCategories}
+          mode="single"
+          layout="scroll"
+          ariaLabel={UI_TEXT.map.quickFiltersAria}
+        />
+
         <div className="controls-top-right">
-          <Tooltip title="Filter bins" arrow>
-            <IconButton
-              className="map-action-btn"
+          <Tooltip content={UI_TEXT.map.openFiltersTooltip} placement="left">
+            <Button
+              variant="icon"
+              size="sm"
               onClick={onOpenFilters}
-              style={{
-                background: "white",
-                boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
-              }}
+              isActive={hasActiveFilters}
+              aria-label={UI_TEXT.map.openFiltersAria}
             >
-              <FilterListIcon />
-            </IconButton>
+              <SlidersHorizontal size={20} />
+            </Button>
           </Tooltip>
         </div>
       </div>
 
-      {/* Controls on the bottom (es. Recenter GPS) */}
+      {/* Controls on the bottom (Recenter GPS) */}
       <div className="controls-bottom-right">
-        {/* GPS / Recenter button */}
-        <Tooltip
-          title={isFollowing ? "Active panning" : "Center on user position"}
-          arrow
-        >
-          <IconButton
-            onClick={onRecenter}
-            style={{
-              backgroundColor: isFollowing ? "#2563eb" : "#ffffff",
-              color: isFollowing ? "#ffffff" : "#1f2937",
-              boxShadow: "0 4px 10px rgba(0,0,0,0.15)",
-              padding: "12px",
-            }}
+        <Tooltip content={UI_TEXT.map.addBinTooltip} placement="left">
+          <Button
+            variant="icon"
+            size="md"
+            onClick={onAddBin}
+            aria-label={UI_TEXT.map.addBinAria}
           >
-            {isFollowing ? <MyLocationIcon /> : <GpsNotFixedIcon />}
-          </IconButton>
+            <Plus size={22} />
+          </Button>
+        </Tooltip>
+
+        <Tooltip
+          content={
+            isFollowing
+              ? UI_TEXT.map.recenterActiveTooltip
+              : UI_TEXT.map.recenterInactiveTooltip
+          }
+          placement="left"
+        >
+          <Button
+            variant="icon"
+            size="sm"
+            onClick={onRecenter}
+            isActive={isFollowing}
+            aria-label={
+              isFollowing
+                ? UI_TEXT.map.recenterActiveTooltip
+                : UI_TEXT.map.recenterInactiveTooltip
+            }
+          >
+            {isFollowing ? <LocateFixed size={20} /> : <Locate size={20} />}
+          </Button>
         </Tooltip>
       </div>
     </div>
