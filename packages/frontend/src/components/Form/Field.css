@@ -1,0 +1,22 @@
+.unibin-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.unibin-field-label {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.unibin-field-helper {
+  font-size: 0.75rem;
+  color: #5d5d5d;
+}
+
+.unibin-field-required {
+  color: #7f1919;
+}
+
+.unibin-field-error {
+  color: #7f1919;
+}

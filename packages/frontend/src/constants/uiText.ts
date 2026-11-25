@@ -1,3 +1,4 @@
+
 export const UI_TEXT = {
   common: {
     appName: 'UNIBIN',
@@ -70,7 +71,7 @@ export const UI_TEXT = {
     categoryLabel: 'Tipologia di rifiuto',
     categoryPlaceholder: 'Seleziona la categoria...',
     notesLabel: 'Indicazioni aggiuntive',
-    notesPlaceholder: "Es. Accanto all'ingresso principale, lato sinistro",
+    notesPlaceholder: "Es. Accanto all\'ingresso principale, lato sinistro",
     photoLabel: 'Scatta una foto del bidone',
     photoHelper: 'Aiuta gli altri utenti a riconoscerlo facilmente.',
     submitCta: 'Pubblica bidone',
@@ -97,5 +98,19 @@ export const UI_TEXT = {
     wipTitle: 'LAVORI IN CORSO!',
     wipDescription: "Questa pagina è ancora in fase di costruzione. \
     Presto potrete sbloccare una nuova sezione dedicata a fantastici premi!",
-  }
+  },
+
+  login: {
+    emailPlaceholder: 'Inserisci email',
+    emailLabel: 'Email',
+    passwordPlaceholder: 'Inserisci password',
+    passwordLabel: 'Password',
+    title: 'Effettua l\'accesso',
+    enterBtn: 'Accedi',
+  },
+
+  errors: {
+    password: 'La password non corrisponde',
+    email: 'Inserire un indirizzo email valido',
+  },
 } as const;

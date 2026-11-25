@@ -1,0 +1,40 @@
+.unibin-input {
+  gap: 8px;
+  flex-grow: 1;
+  background-color: transparent;
+  border: none;
+}
+
+.unibin-input-wrapper .unibin-input,
+.unibin-input-wrapper .unibin-input:focus,
+.unibin-input-wrapper .unibin-input:focus-visible,
+.unibin-input-wrapper .unibin-input[data-focus] {
+  border: none;
+  outline: none;
+  box-shadow: none;
+  background: transparent;
+}
+
+.unibin-input-action {
+  background-color: transparent;
+  border: none;
+  justify-content: center;
+}
+
+.unibin-input-action:hover {
+  color: rgba(0, 0, 0, 0.5);
+}
+
+.unibin-input-wrapper {
+  display: flex;
+  justify-content: space-between;
+  border-radius: 8px;
+  box-shadow: 0 0 2px rgba(0, 0, 0, 0.65);
+  width: 100%;
+  padding: 8px;
+  gap: 8px;
+}
+
+.unibin-input-wrapper:focus-within {
+  box-shadow: 0 0 4px rgba(39, 135, 133, 1);
+}
