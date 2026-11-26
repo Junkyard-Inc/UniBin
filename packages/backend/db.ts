@@ -22,16 +22,9 @@ export async function reportNewBin(longitude: number, latitude: number, state: s
   } else if (check.new_bins_reported_today === 0) {
     advice = "You reached your daily limit for new bins report";
   } else {
-    //TODO: Integrate getBinID()
-    //checking first if the bin is already in the db with status "Inactive"
-    const [binExists] = await connection`
-      SELECT bn.bin_id, bs.status
-      FROM trashbin bn
-      JOIN bin_status bs ON bs.status_id = bn.status
-      WHERE ST_DWithin(bn.location, ST_SetSRID(ST_MakePoint(${longitude}, ${latitude}), 4326)::geography, 1) AND bn.type = (SELECT type_id FROM bin_type WHERE type = ${type})
-    `;
-    if (!binExists) {
-      // bin does not exist
+    const [bin] = await getBinID(longitude, latitude, type);
+    // bin does not exist
+    if (!bin) {
       try
       {
         const [newBinQuery] = await connection`
@@ -66,30 +59,38 @@ export async function reportNewBin(longitude: number, latitude: number, state: s
         console.error("Report new bin failed:", e);
         advice = "Something went wrong";
       }
-    } else if (binExists.status === "Inactive") { // WARN: Come gestisco Removed by Admin?
       // Bin exists but is inactive
-      try {
-        await connection`
-          UPDATE trashbin
-          SET status = (SELECT status_id FROM bin_status WHERE status = 'Active')
-          WHERE bin_id = ${binExists.bin_id}
-          `;
-        advice = "Trashbin reactivated";
-      } catch (e) {
-        console.error("Report new bin failed:", e);
-        advice = "Something went wrong";
-      }
     } else {
-      // Bin already exists and is active
-      advice = "Trashbin already exists";
+      //checking first if the bin is already in the db with status "Inactive"
+      const [binStat] = await connection`
+        SELECT bs.status
+        FROM trashbin bn
+        JOIN bin_status bs ON bs.status_id = bn.status
+        WHERE bn.bin_id = ${bin.bin_id}
+      `;
+
+      if (binStat.status === "Inactive") { // TODO: how do I handle Removed by Admin?
+        try {
+          await connection`
+            UPDATE trashbin
+            SET status = (SELECT status_id FROM bin_status WHERE status = 'Active')
+            WHERE bin_id = ${bin.bin_id}
+            `;
+          advice = "Trashbin reactivated";
+        } catch (e) {
+          console.error("Report new bin failed:", e);
+          advice = "Something went wrong";
+        }
+      } else { // Bin already exists and is active
+        advice = "Trashbin already exists";
     }
   }
   return advice;
 }
 
 //WARN: Still very experimental needs ATTENTION
+// This function lets a user report multiple bins in the same position
 export async function reportGroupOfBins(longitude: number, latitude: number, states: string[], types: string[], reporting_user: string) {
-  // This function lets a user report multiple bins in the same position
   if (states.length !== types.length) {
     return "states array does not match types array length";
   }
@@ -139,19 +140,15 @@ export async function reportGroupOfBins(longitude: number, latitude: number, sta
 export async function getNearBinsPosition(usr_long: number, usr_lat: number, radius: number) {
   // Returning an array containing longitude, latitude and distance from the position of nearby bins
   return await connection`
-    SELECT
-      ST_X(location::geometry) AS longitude,
-      ST_Y(location::geometry) AS latitude,
-      ST_Distance(
-        location,
-        ST_SetSRID(ST_MakePoint(${usr_long}, ${usr_lat}), 4326)::geography
-      )::float AS distance_m
-    FROM trashbin
-    WHERE ST_DWithin(
-      location,
-      ST_SetSRID(ST_MakePoint(${usr_long}, ${usr_lat}), 4326)::geography,
-      ${radius}
-    )
+    SELECT bt.type,
+           ST_X(bn.location::geometry) AS longitude,
+           ST_Y(bn.location::geometry) AS latitude,
+           ST_Distance(bn.location, ST_SetSRID(ST_MakePoint(${usr_long}, ${usr_lat}), 4326)::geography)::float AS distance_m
+    FROM trashbin bn
+    JOIN bin_type bt   ON bt.type_id = bn.type
+    JOIN bin_status bs ON bs.status_id = bn.status
+    WHERE bs.status = 'Active'
+      AND ST_DWithin(bn.location, ST_SetSRID(ST_MakePoint(${usr_long}, ${usr_lat}), 4326)::geography, ${radius})
     ORDER BY distance_m
   `;
 }
@@ -171,14 +168,19 @@ export async function reviewBin(bin_long: number, bin_lat: number, type:string, 
     advice = "You reached your daily limit for bins reviews";
   } else {
     try {
+      const bin = await getBinID(bin_long, bin_lat, type);
+      if (!bin) {
+        throw new Error("Cannot find bin");
+      }
       const [query] = await connection`
         INSERT INTO bin_review (reviewed_bin, reviewing_user, reported_state)
         SELECT
-          (SELECT bin_id FROM trashbin WHERE location = ST_SetSRID(ST_MakePoint(${bin_long}, ${bin_lat}), 4326) AND type = (SELECT type_id FROM bin_type WHERE type = ${type})),
+          ${bin.bin_id},
           (SELECT user_id FROM trash_user WHERE username=${reviewing_user}),
           (SELECT state_id FROM bin_state WHERE state=${reported_state})
         RETURNING bin_rev_id, reviewed_at
-      `;
+      `
+
       // In this case the field reviewed_at is not inserted manually cause in the schema the field is set to DEFAULT now()
       if (!query) {
         throw new Error("Nothing was inserted");
@@ -190,6 +192,7 @@ export async function reviewBin(bin_long: number, bin_lat: number, type:string, 
       `;
       console.log("Trashbin reviewed successfully!");
       advice = "Trashbin reviewed successfully!";
+
     } catch (e) {
       console.error("Review bin failed:", e);
       advice = "Something went wrong";
@@ -198,154 +201,169 @@ export async function reviewBin(bin_long: number, bin_lat: number, type:string, 
   return advice;
 }
 
+// TODO: A user can vote multiple times without limits and can also vote for its own reviews, MUST fix
 // Increase the "useful counter" of a given bin review
 export async function usefulBinRev(bin_long: number, bin_lat: number, bin_type: string, username: string, date_time: Date) {
-  try {
-    let [binRev] = await getBinRevID(bin_long, bin_lat, bin_type, username, date_time);
-
-    if (binRev.bin_rev_id === null) {
-      throw new Error("Cannot find bin review")
-    }
-
-    await connection`
-      UPDATE bin_review
-      SET useful = useful + 1
-      WHERE bin_rev_id = ${binRev.bin_rev_id}
-    `;
-  } catch (e) {
-    console.error("Something went wrong: ", e);
-    return null
+  const revId = await getBinRevID(bin_long, bin_lat, bin_type, username, date_time);
+  if (revId === null) {
+    return "Review not found";
   }
+  const [row] = await connection`
+    UPDATE bin_review SET useful = useful + 1
+    WHERE bin_rev_id = ${revId}
+    RETURNING reviewing_user
+  `;
+  try {
+    await computeUserRank(row.reviewing_user); // the author's reliability changed
+  } catch (e) {
+    console.error("Rank update failed:", e);
+  }
+  return "Vote registered";
 }
 
+// TODO: A user can vote multiple times without limits and can also vote for its own reviews, MUST fix
 // Increase the "not useful counter" of a given bin review
 export async function notUsefulBinRev(bin_long: number, bin_lat: number, bin_type: string, username: string, date_time: Date) {
-  try {
-    let [binRev] = await getBinRevID(bin_long, bin_lat, bin_type, username, date_time);
-
-    if (binRev.bin_rev_id === null) {
-      throw new Error("Cannot find bin review")
-    }
-
-    await connection`
-      UPDATE bin_review
-      SET not_useful = not_useful + 1
-      WHERE bin_rev_id = ${binRev.bin_rev_id}
-    `;
-  } catch (e) {
-    console.error("Something went wrong: ", e);
-    return null
+  const revId = await getBinRevID(bin_long, bin_lat, bin_type, username, date_time);
+  if (revId === null) {
+    return "Review not found";
   }
+  const [row] = await connection`
+    UPDATE bin_review SET not_useful = not_useful + 1
+    WHERE bin_rev_id = ${revId}
+    RETURNING reviewing_user
+  `;
+  try {
+    await computeUserRank(row.reviewing_user); // the author's reliability changed
+  } catch (e) {
+    console.error("Rank update failed:", e);
+  }
+  return "Vote registered";
 }
 
-//TODO: Integrate getBinID()
 // This function must "remove" a bin from the db if the latest reported state is
 export async function removeBin(bin_long: number, bin_lat: number, type: string) {
   // This query gets the latest review of a given trashbin
-  const [rev_bin] = await connection`
-    WITH selected_bin AS (
-      SELECT bn.bin_id
-      FROM trashbin bn
-      JOIN bin_type bt ON bt.type_id = bn.type
-      WHERE bt.type = ${type} AND ST_DWithin(
-        bn.location,
-        ST_SetSRID(ST_MakePoint(${bin_long}, ${bin_lat}), 4326)::geography,
-        1
-      ) -- Gets all the bins in that position and in a radius of one meter
-      ORDER BY bn.location <-> ST_SetSRID(ST_MakePoint(${bin_long}, ${bin_lat}), 4326)::geography -- Operand <-> returns the distance between two spatial values
-      LIMIT 1
-    )
-    SELECT br.reviewed_bin, br.reliable, bs.state_id, bs.state, br.reviewed_at, (br.reviewed_at < now() - INTERVAL '30 days') AS is_stale
-    FROM bin_review br
-    JOIN selected_bin sb ON sb.bin_id = br.reviewed_bin
-    JOIN bin_state bs ON bs.state_id = br.reported_state
-    ORDER BY br.reviewed_at DESC
-    LIMIT 1
-  `;
-  // is_stale is used to check if the review the query found is older than 30 days
-  if (!rev_bin) {
-    return "An error has occured";
-  } else if (rev_bin.is_stale && rev_bin.state === "Removed" && rev_bin.reliable) {
-    try {
-      await connection`
-        UPDATE trashbin
-        SET status = (SELECT status_id FROM bin_status WHERE status='Inactive')
-        WHERE bin_id = ${rev_bin.reviewed_bin}
-      `;
-      return "Removal successful";
-    } catch (e) {
-      console.error("Bin removal failed: ", e);
-      return "Bin removal unsuccessful";
+  try {
+    const bin = await getBinID(bin_long, bin_lat, type);
+    if (!bin) {
+      throw new Error("Cannot find bin");
     }
+    const [rev_bin] = await connection`
+      SELECT br.reviewed_bin, br.reliable, bs.state_id, bs.state, br.reviewed_at, (br.reviewed_at < now() - INTERVAL '30 days') AS is_stale
+      FROM bin_review br
+      JOIN bin_state bs ON bs.state_id = br.reported_state
+      WHERE br.reviewed_bin = ${bin.bin_id}
+      ORDER BY br.reviewed_at DESC, br.bin_rev_id DESC
+      LIMIT 1
+    `;
+      /*const [rev_bin] = await connection`
+        WITH selected_bin AS (
+          SELECT bn.bin_id
+          FROM trashbin bn
+          JOIN bin_type bt ON bt.type_id = bn.type
+          WHERE bt.type = ${type} AND ST_DWithin(
+            bn.location,
+            ST_SetSRID(ST_MakePoint(${bin_long}, ${bin_lat}), 4326)::geography,
+            1
+          ) -- Gets all the bins in that position and in a radius of one meter
+          ORDER BY bn.location <-> ST_SetSRID(ST_MakePoint(${bin_long}, ${bin_lat}), 4326)::geography -- Operand <-> returns the distance between two spatial values
+          LIMIT 1
+        )
+        SELECT br.reviewed_bin, br.reliable, bs.state_id, bs.state, br.reviewed_at, (br.reviewed_at < now() - INTERVAL '30 days') AS is_stale
+        FROM bin_review br
+        JOIN selected_bin sb ON sb.bin_id = br.reviewed_bin
+        JOIN bin_state bs ON bs.state_id = br.reported_state
+        ORDER BY br.reviewed_at DESC
+        LIMIT 1
+      `;*/
+      // is_stale is used to check if the review the query found is older than 30 days
+    if (!rev_bin) {
+      throw new Error("Unable to find bin review");
+      //return "An error has occured";
+    }
+    if (!(rev_bin.is_stale && rev_bin.state === "Removed" && rev_bin.reliable)) {
+      //throw new Error("Bin not removed");
+      return "Bin not removed";
+    }
+
+    const [update] = await connection`
+      UPDATE trashbin
+      SET status = (SELECT status_id FROM bin_status WHERE status='Inactive')
+      WHERE bin_id = ${rev_bin.reviewed_bin}
+        AND status = (SELECT status_id FROM bin_status WHERE status = 'Active') -- So that we don't overwrite "Removed by Admin"
+      RETURNING bin_id, reporting_user
+    `;
+
+    if (!update) {
+      //throw new Error("Unable to update trashbin table");
+      return "Bin not removed (already inactive or removed by admin)";
+    }
+
+    // A rank error must not turn a successful removal into a failure
+    try {
+      // Getting reporting_user from the update query so that I do not have to make another redundant query
+      await computeUserRank(update.reporting_user);
+    } catch (e) {
+      console.error("Rank update failed:", e);
+    }
+
+    return "Removal successful";
+  } catch (e) {
+    console.error("Bin removal failed: ", e);
+    return "Bin removal unsuccessful";
   }
 }
 
 // Returns the trashbin ID given specific parameters
 export async function getBinID(longitude: number, latitude: number, type: string) {
-  try {
-    return await connection`
-      SELECT bn.bin_id
-      FROM trashbin bn
-      JOIN bin_type bt ON bt.type_id = bn.type
-      WHERE bt.type = ${type} AND ST_DWithin(
-        bn.location,
-        ST_SetSRID(ST_MakePoint(${longitude}, ${latitude}), 4326)::geography,
-        1
-      ) -- Gets all the bins in that position and in a radius of one meter
-      ORDER BY bn.location <-> ST_SetSRID(ST_MakePoint(${longitude}, ${latitude}), 4326)::geography -- Operand <-> returns the distance between two spatial values
-      LIMIT 1
-    `;
-  } catch (e) {
-    console.error("Bin ID fetch failure: ", e);
-    return null;
-  }
+  const [bin] = await connection`
+    SELECT bn.bin_id
+    FROM trashbin bn
+    JOIN bin_type bt ON bt.type_id = bn.type
+    WHERE bt.type = ${type} AND ST_DWithin(
+      bn.location,
+      ST_SetSRID(ST_MakePoint(${longitude}, ${latitude}), 4326)::geography,
+      1
+    ) -- Gets all the bins in that position and in a radius of one meter
+    ORDER BY bn.location <-> ST_SetSRID(ST_MakePoint(${longitude}, ${latitude}), 4326)::geography -- Operand <-> returns the distance between two spatial values
+    LIMIT 1
+  `;
+  return bin ?? null;
 }
 
 // Returns the bin revuew ID given specific parameters
-export async function getBinRevID(bin_long: number, bin_lat: number, bin_type:string, username: string, date_time: Date) {
-  try {
-    let [trashbin] = await getBinID(bin_long, bin_lat, bin_type);
-    let [user] = await getUserID(username);
+export async function getBinRevID(bin_long: number, bin_lat: number, bin_type:string, username: string, date_time: Date): Promise<number | null>{
+  const trashbin = await getBinID(bin_long, bin_lat, bin_type);
+  const user = await getUserID(username);
+  if (!trashbin || !user) return null;
 
-    if (trashbin.bin_id === null || user.user_id === null) {
-      throw new Error("Cannot find trashbin or user");
-    }
-
-    return await connection`
-      SELECT bin_rev_id
-      FROM bin_review
-      WHERE reviewed_bin = ${trashbin.bin_id}
+  const [rev] = await connection`
+    SELECT bin_rev_id
+    FROM bin_review
+    WHERE reviewed_bin = ${trashbin.bin_id}
       AND reviewing_user = ${user.user_id}
       AND reviewed_at >= ${date_time}
       AND reviewed_at <  ${new Date(date_time.getTime() + 1)}
-      ORDER BY reviewed_at DESC
-      LIMIT 1
-    `;
-  } catch (e) {
-    console.error("Trashbin review ID fetch failure: ", e);
-    return null;
-  }
+    ORDER BY reviewed_at DESC
+    LIMIT 1
+  `;
+  return rev?.bin_rev_id ?? null;
 }
 
-export async function getLatestBinRevID(bin_long: number, bin_lat: number, bin_type: string) {
-  try {
-    const [trashbin] = await getBinID(bin_long, bin_lat, bin_type);
+export async function getLatestBinRevID(bin_long: number, bin_lat: number, bin_type: string): Promise<number | null> {
+  const trashbin = await getBinID(bin_long, bin_lat, bin_type);
+  if (!trashbin) return null;
 
-    if (trashbin.bin_id === null) {
-      throw new Error("Cannot find trashbin");
-    }
+  const [rev] = await connection`
+    SELECT bin_rev_id
+    FROM bin_review
+    WHERE reviewed_bin = ${trashbin.bin_id}
+    ORDER BY reviewed_at DESC, bin_rev_id DESC
+    LIMIT 1
+  `;
 
-    return await connection`
-      SELECT bin_rev_id
-      FROM bin_review
-      WHERE reviewed_bin = ${trashbin.bin_id}
-      ORDER BY reviewed_at DESC
-      LIMIT 1
-    `;
-  } catch (e) {
-    console.error("Latest trashbin review ID fetch failure: ", e);
-    return null;
-  }
+  return rev?.bin_rev_id ?? null;
 }
 
 // This function returns all the public trashbin data given a specific ID
@@ -394,7 +412,7 @@ export async function reviewUser(title: string, body: string, vote: number, revi
             ${vote}::NUMERIC(5, 4),
             (SELECT user_id FROM trash_user WHERE username=${reviewed_user}),
             (SELECT user_id FROM trash_user WHERE username=${reviewing_user})
-          RETURNING user_rev_id, date_time
+          RETURNING user_rev_id, date_time, reviewed_user
         `;
         // In this case the field date_time is not inserted manually cause in the schema the field is set to DEFAULT now()
         if (!query) {
@@ -405,6 +423,15 @@ export async function reviewUser(title: string, body: string, vote: number, revi
           SET users_reviewed_today = (users_reviewed_today - 1)
           WHERE username=${reviewing_user}
         `;
+
+        // The reviewed user's score depends on the votes they receive, so recompute it.
+        // Own try/catch: a rank error must not turn a saved review into a failure.
+        try {
+          await computeUserRank(query.reviewed_user);
+        } catch (e) {
+          console.error("Rank update failed:", e);
+        }
+
         console.log("User reviewed successfully!");
         advice = "User reviewed successfully!";
       } catch (e) {
@@ -433,8 +460,11 @@ export async function registerNewUser(email: string, username: string, password:
   let pw_spec_flag = false; // if password does not contain any special character =true
   let advice = "";
 
+  // An invalid or missing timezone must not block the registration
+  const tz = timezone && (await isValidTimezone(timezone)) ? timezone : "Europe/Rome";
+
   // This removes spaces and anything that is NOT a letter, number, @, ., -, or _
-  const clean_email = email.replace(/[^a-zA-Z0-9@._-]/g, '');
+  const clean_email = email.replace(/[^a-zA-Z0-9@._-]/g, '').toLowerCase();
 
   const [email_check] = await connection`
     SELECT EXISTS(
@@ -481,19 +511,20 @@ export async function registerNewUser(email: string, username: string, password:
     const hash = await Bun.password.hash(password); // argon2id by default
     try {
       const [query] = await connection`
-        INSERT INTO trash_user (email, username, password, rank, role, new_bins_reported_today, bins_reported_today, users_reviewed_today)
+        INSERT INTO trash_user (email, username, password, rank, role, new_bins_reported_today, bins_reported_today, users_reviewed_today, timezone)
         SELECT
-          ${email}::TEXT,
+          ${clean_email}::TEXT,
           ${username}::TEXT,
           ${hash}::TEXT,
           (SELECT rank_id FROM user_rank WHERE rank_name='Rifiuto Della Società'),
           (SELECT role_id FROM user_role WHERE role='Registered User'),
           (SELECT daily_new_bins_report FROM user_rank WHERE rank_name='Rifiuto Della Società'),
           (SELECT daily_bins_report FROM user_rank WHERE rank_name='Rifiuto Della Società'),
-          (SELECT daily_users_review FROM user_rank WHERE rank_name='Rifiuto Della Società')
+          (SELECT daily_users_review FROM user_rank WHERE rank_name='Rifiuto Della Società'),
+          ${tz}::TEXT
         RETURNING user_id
       `;
-      if (query.length === 0) {
+      if (!query) {
         throw new Error("Nothing was inserted");
       }
       advice = "User added successfully!";
@@ -523,25 +554,27 @@ export async function registerNewUser(email: string, username: string, password:
 }
 
 // This function must let an already registered user to login
-export async function userLogin(username: string, password: string) {
+export async function userLogin(username: string, password: string, timezone?: string) {
   const [query] = await connection`
     SELECT username, password
     FROM trash_user
     WHERE username=${username}
   `;
   if (!query) {
-    return "No such username";
-  } else {
-    const pw_ok = await Bun.password.verify(password, query.password); // true / false
-    if (pw_ok) {
-      return "Auth successfull";
-    } else {
-      return "Incorrect password"
-    }
+    return "Invalid credentials";
+    //return "No such username"; This would reveal an attacker important informations
   }
+  const pw_ok = await Bun.password.verify(password, query.password); // true / false
+  if (!pw_ok) {
+    return "Invalid credentials";
+    //return "Incorrect password" This would reveal an attacker important informations
+  }
+  // Only after the password is verified, apply the timezone and the daily reset
+  await startUserRequest(username, timezone);
+  return "Auth successfull";
 }
 
-//TODO: Understand where to use this function and evaluate removal of usage data reset
+//TODO: Understand where to use this function
 
 // This function must calculate a user's rank based off of certain criteria
 // This function is called when a user gets reviewed or when a bin bin review by the same user gets a feedback
@@ -615,6 +648,8 @@ export async function computeUserRank(userID: number) {
     WHERE user_id = ${userID}
     `;
 
+  if (!seniority) return "Calculation failed";
+
   const [n_users_reviewed] = await connection`
     SELECT COUNT(*)::int AS total
     FROM user_review
@@ -636,16 +671,18 @@ export async function computeUserRank(userID: number) {
   total_pts += (seniority.years * 1000) * multiplier;
   total_pts += (n_users_reviewed.total * 100) * multiplier;
 
-  const points = await connection`
+  /*const points = await connection`
     SELECT minimum_score
     FROM user_rank
     ORDER BY minimum_score ASC
-    `;
+    `;*/
 
   console.log("total points:", total_pts);
 
   const ranks = await connection`
-    SELECT rank_id, minimum_score FROM user_rank ORDER BY minimum_score ASC
+    SELECT rank_id, minimum_score
+    FROM user_rank
+    ORDER BY minimum_score ASC
   `;
   let rankId: number | null = null;
   for (const r of ranks) {
@@ -658,14 +695,13 @@ export async function computeUserRank(userID: number) {
     //}
   //}
 
+  // This UPDATE only sets the rank.
+  // It no longer overwrites the daily counters:
+  // they are restored only by resetDailyUserData, from the user's current rank.
   if (rankId !== null) {
     await connection`
       UPDATE trash_user
-      SET
-        rank = (SELECT rank_id FROM user_rank WHERE rank_name = ${rankId}),
-        new_bins_reported_today = (SELECT daily_new_bins_report FROM user_rank WHERE rank_name = ${rankId}),
-        bins_reported_today = (SELECT daily_bins_report FROM user_rank WHERE rank_name = ${rankId}),
-        users_reviewed_today = (SELECT daily_users_review FROM user_rank WHERE rank_name = ${rankId})
+      SET rank = ${rankId}
       WHERE user_id = ${userID}
     `;
   } else {
@@ -673,6 +709,63 @@ export async function computeUserRank(userID: number) {
   }
 
 }
+
+// Returns the user ID given specific parameters
+export async function getUserID(username: string) {
+  const [user] = await connection`
+      SELECT user_id
+      FROM trash_user
+      WHERE username = ${username}
+    `;
+  return user ?? null;
+}
+
+// Returns the user review ID given specific parameters
+export async function getUserRevID(reviewed_user: string, reviewing_user: string, date_time: Date): Promise<number | null> {
+  const rows = await connection`
+    SELECT ur.user_rev_id
+    FROM user_review ur
+    JOIN trash_user reviewed  ON reviewed.user_id  = ur.reviewed_user
+    JOIN trash_user reviewing ON reviewing.user_id = ur.reviewing_user
+    WHERE reviewed.username  = ${reviewed_user}
+      AND reviewing.username = ${reviewing_user}
+      AND ur.date_time >= ${date_time}
+      AND ur.date_time <  ${new Date(date_time.getTime() + 1)}
+    ORDER BY ur.date_time DESC
+    LIMIT 1
+  `;
+  return rows[0]?.user_rev_id ?? null;
+}
+
+export async function getLatestUserRevID(reviewed_user: string): Promise<number | null> {
+  const [revedUsr] = await getUserID(reviewed_user);
+
+  if (!revedUsr) return null;
+
+  const [rev] = await connection`
+    SELECT user_rev_id
+    FROM user_review
+    WHERE reviewed_user = ${revedUsr.user_id}
+    ORDER BY date_time DESC, user_rev_id DESC
+    LIMIT 1
+  `;
+
+  return rev?.user_rev_id ?? null;
+}
+
+// This function returns all the public user data given a specific ID
+export async function getUserData() {
+
+}
+
+// This function returns all the public user review data given a specific ID
+export async function getUserRevData() {
+
+}
+
+//####################################################################################################################################
+//--------------------------------------------## Timezone and DataUsage Related Functions ##------------------------------------------
+//####################################################################################################################################
 
 // True if Postgres knows this IANA name (e.g. "Europe/Rome").
 // An invalid name inside AT TIME ZONE would make the reset query fail for everyone.
@@ -694,18 +787,19 @@ export async function resetDailyUserData(username?: string): Promise<number> {
   // 2. we could add a time-zone to user entity and reset everytime a certain time-zone reaches midnight
   // 3. we could execute the reset everytime the user does something while also checking the date
   const rows = await connection`
-    UPDATE trash_user u
-    SET new_bins_reported_today = r.daily_new_bins_report,
-        bins_reported_today     = r.daily_bins_report,
-        users_reviewed_today    = r.daily_users_review,
-        last_data_usage_reset   = now()
-    FROM user_rank r
-    WHERE r.rank_id = u.rank
-      AND (u.last_data_usage_reset AT TIME ZONE u.timezone)::date < (now() AT TIME ZONE u.timezone)::date
-      AND (${username ?? null}::text IS NULL OR u.username = ${username ?? null})
-    RETURNING u.user_id
-  `;
-  return rows.length;
+      UPDATE trash_user u
+      SET new_bins_reported_today = r.daily_new_bins_report,
+          bins_reported_today     = r.daily_bins_report,
+          users_reviewed_today    = r.daily_users_review,
+          last_data_usage_reset   = now()
+      FROM user_rank r
+      WHERE r.rank_id = u.rank
+        AND (u.last_data_usage_reset AT TIME ZONE u.timezone)::date
+            < (now() AT TIME ZONE u.timezone)::date
+        AND (${username ?? null}::text IS NULL OR u.username = ${username ?? null})
+      RETURNING u.user_id
+    `;
+    return rows.length;
 }
 
 // Changes the user's timezone.
@@ -728,7 +822,7 @@ export async function updateUserTimezone(username: string, timezone: string) {
   return "Timezone updated";
 }
 
-//TODO: Understand where to use this function and evaluate removal of usage data reset
+//TODO: Understand where to use this function
 
 // Call this once at the start of every request that reads or spends usage data.
 // A rejected or invalid timezone is ignored on purpose: it must never fail the request.
@@ -738,78 +832,6 @@ export async function startUserRequest(username: string, timezone?: string) {
     await updateUserTimezone(username, timezone);
   }
   await resetDailyUserData(username);
-}
-
-// Returns the user ID given specific parameters
-export async function getUserID(username: string) {
-  try {
-    return await connection`
-      SELECT user_id
-      FROM trash_user
-      WHERE username = ${username}
-    `;
-  } catch (e) {
-    console.error("User ID fetch failure: ", e);
-    return null;
-  }
-}
-
-// Returns the user review ID given specific parameters
-export async function getUserRevID(reviewed_user: string, reviewing_user: string, date_time: Date) {
-  try {
-    let [revedUsr] = await getUserID(reviewed_user);
-    let [revingUsr] = await getUserID(reviewing_user);
-
-    if (revedUsr.user_id === null || revingUsr.user_id === null) {
-      throw new Error("Cannot find one or more users");
-    }
-
-    return await connection`
-      SELECT user_rev_id
-      FROM user_review
-      WHERE
-        reviewed_user = ${revedUsr.user_id}
-        AND reviewing_user = ${revingUsr.user_id}
-        AND date_time >= ${date_time}
-        AND date_time <  ${new Date(date_time.getTime() + 1)}
-        ORDER BY date_time DESC
-        LIMIT 1
-    `;
-  } catch (e) {
-    console.error("User review ID fetch failure: ", e);
-    return null;
-  }
-}
-
-export async function getLatestUserRevID(reviewed_user: string) {
-  try {
-    const [revedUsr] = await getUserID(reviewed_user);
-
-    if (revedUsr.user_id === null) {
-      throw new Error("Cannot find user");
-    }
-
-    return await connection`
-      SELECT user_rev_id
-      FROM user_review
-      WHERE reviewed_user = ${revedUsr.user_id}
-      ORDER BY date_time DESC
-      LIMIT 1
-    `;
-  } catch (e) {
-    console.error("Latest trashbin review ID fetch failure: ", e);
-    return null;
-  }
-}
-
-// This function returns all the public user data given a specific ID
-export async function getUserData() {
-
-}
-
-// This function returns all the public user review data given a specific ID
-export async function getUserRevData() {
-
 }
 
 export async function serverRequestsThrottling() {

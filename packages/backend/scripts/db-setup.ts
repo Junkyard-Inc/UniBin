@@ -77,7 +77,7 @@ const schema = `
   -- user is a reserved word in Postgresql, so this table won't be called just user
   CREATE TABLE IF NOT EXISTS trash_user(
     user_id SERIAL PRIMARY KEY,
-    email TEXT NOT NULL,
+    email TEXT NOT NULL UNIQUE,
     username  TEXT NOT NULL UNIQUE,
     password  TEXT NOT NULL,
     profile_picture TEXT,
