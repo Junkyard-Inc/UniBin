@@ -8,12 +8,14 @@ import Button from "../../components/Button/Button";
 import { FILTER_ITEMS } from "../../constants/chipItems";
 import ChipGroup from "../../components/ChipGroup/ChipGroup";
 import Dialog from "../../components/Dialog/Dialog";
+import { useNavigate } from "react-router-dom";
 
 export function MapPage() {
   const [isFollowing, setIsFollowing] = useState<boolean>(true);
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [isFiltersOpen, setIsFiltersOpen] = useState<boolean>(false);
   const [isAuthDialogOpen, setIsAuthDialogOpen] = useState<boolean>(false);
+  const navigate = useNavigate();
 
   const handleRecenter = () => {
     setIsFollowing(true);
@@ -88,7 +90,7 @@ export function MapPage() {
             <Button
               className="btn-primary"
               variant="primary"
-              onClick={() => console.log("navigate to login")}
+              onClick={() => navigate("/login")}
             >
               {UI_TEXT.authPrompt.loginCta}
             </Button>
