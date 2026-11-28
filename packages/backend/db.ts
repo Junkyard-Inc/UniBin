@@ -1,4 +1,4 @@
-import { SQL } from "bun";
+import { sql, SQL } from "bun";
 
 export const connection = new SQL(process.env.DATABASE_URL!);
 
@@ -22,11 +22,10 @@ export async function reportNewBin(longitude: number, latitude: number, state: s
   } else if (check.new_bins_reported_today === 0) {
     advice = "You reached your daily limit for new bins report";
   } else {
-    const [bin] = await getBinID(longitude, latitude, type);
+    const bin = await getBinID(longitude, latitude, type);
     // bin does not exist
     if (!bin) {
-      try
-      {
+      try {
         const [newBinQuery] = await connection`
           INSERT INTO trashbin (location, type, status, reporting_user)
           SELECT
@@ -83,6 +82,7 @@ export async function reportNewBin(longitude: number, latitude: number, state: s
         }
       } else { // Bin already exists and is active
         advice = "Trashbin already exists";
+      }
     }
   }
   return advice;
@@ -175,7 +175,7 @@ export async function reviewBin(bin_long: number, bin_lat: number, type:string, 
       const [query] = await connection`
         INSERT INTO bin_review (reviewed_bin, reviewing_user, reported_state)
         SELECT
-          ${bin.bin_id},
+          ${bin.bin_id}::int,
           (SELECT user_id FROM trash_user WHERE username=${reviewing_user}),
           (SELECT state_id FROM bin_state WHERE state=${reported_state})
         RETURNING bin_rev_id, reviewed_at
@@ -201,45 +201,103 @@ export async function reviewBin(bin_long: number, bin_lat: number, type:string, 
   return advice;
 }
 
-// TODO: A user can vote multiple times without limits and can also vote for its own reviews, MUST fix
-// Increase the "useful counter" of a given bin review
-export async function usefulBinRev(bin_long: number, bin_lat: number, bin_type: string, username: string, date_time: Date) {
-  const revId = await getBinRevID(bin_long, bin_lat, bin_type, username, date_time);
-  if (revId === null) {
-    return "Review not found";
-  }
-  const [row] = await connection`
-    UPDATE bin_review SET useful = useful + 1
-    WHERE bin_rev_id = ${revId}
-    RETURNING reviewing_user
-  `;
+// TODO: The user can only voce a review once (shoulf the user need to change its vote?)
+// Increase the "useful\bot_useful" counters of a given bin review
+// if 'vote' is true the user found the review useful, otherwise if 'vote' is false the user found the review not useful
+export async function reviewFeedback(bin_long: number, bin_lat: number, bin_type: string, author: string, voter: string, vote: boolean, date_time: Date) {
+  const revId = await getBinRevID(bin_long, bin_lat, bin_type, author, date_time);
+    if (revId === null) {
+      return "Review not found";
+    }
+
+    let authorId: number;
   try {
-    await computeUserRank(row.reviewing_user); // the author's reliability changed
-  } catch (e) {
-    console.error("Rank update failed:", e);
-  }
-  return "Vote registered";
+      // Transaction aware query execution
+      authorId = await connection.begin(async (tx) => {
+        const [feedback] = await tx`
+          INSERT INTO bin_review_feedback (bin_review_id, voter, useful)
+          SELECT ${revId}::int, u.user_id, ${vote}::boolean
+          FROM trash_user u
+          WHERE u.username = ${voter}
+            AND u.user_id <> (SELECT reviewing_user FROM bin_review WHERE bin_rev_id = ${revId})
+          ON CONFLICT (bin_review_id, voter) DO NOTHING
+          RETURNING voter
+        `;
+        if (!feedback) {
+          throw new Error("NOT_ALLOWED");
+        }
+
+        const [updated] = await tx`
+          UPDATE bin_review
+          SET useful = useful + (CASE WHEN ${vote}::boolean THEN 1 ELSE 0 END),
+              not_useful = not_useful + (CASE WHEN ${vote}::boolean THEN 0 ELSE 1 END)
+          WHERE bin_rev_id = ${revId}
+          RETURNING reviewing_user
+        `;
+        if (!updated) {
+          throw new Error("Unable to update feedback counter");
+        }
+        return updated.reviewing_user;
+      });
+    } catch (e: any) {
+      if (e.message === "NOT_ALLOWED") {
+        return "User already voted, or not allowed";
+      }
+      console.error("Vote failed:", e);
+      return "Unable to update useful counter";
+    }
+
+    // After the commit: a rank error must not undo the vote
+    try {
+      await computeUserRank(authorId);
+    } catch (e) {
+      console.error("Rank update failed:", e);
+    }
+    return "Vote registered";
 }
 
-// TODO: A user can vote multiple times without limits and can also vote for its own reviews, MUST fix
-// Increase the "not useful counter" of a given bin review
-export async function notUsefulBinRev(bin_long: number, bin_lat: number, bin_type: string, username: string, date_time: Date) {
-  const revId = await getBinRevID(bin_long, bin_lat, bin_type, username, date_time);
+/* Increase the "not useful counter" of a given bin review
+export async function notUsefulBinRev(bin_long: number, bin_lat: number, bin_type: string, voter: string, date_time: Date) {
+  const revId = await getBinRevID(bin_long, bin_lat, bin_type, voter, date_time);
   if (revId === null) {
     return "Review not found";
   }
-  const [row] = await connection`
+
+  const [feedback] = await connection`
+    INSERT INTO bin_review_feedback(bin_review_id, voter, useful)
+    SELECT ${revId}::int, u.user_id, false
+    FROM trash_user u
+    WHERE u.username = ${voter}
+      AND u.user_id <> (SELECT reviewing_user FROM bin_review WHERE bin_rev_id = ${revId}) -- Checks if user is trying to vote its own review
+    ON CONFLICT (bin_review_id, voter) DO NOTHING -- Checks if user is trying to vote twice on the same review
+    RETURNING voter
+  `;
+  if (!feedback) {
+    return "User already voted, or not allowed";
+  }
+
+  const [update_fb] = await connection`
     UPDATE bin_review SET not_useful = not_useful + 1
     WHERE bin_rev_id = ${revId}
     RETURNING reviewing_user
   `;
-  try {
-    await computeUserRank(row.reviewing_user); // the author's reliability changed
-  } catch (e) {
-    console.error("Rank update failed:", e);
+
+  if (update_fb) {
+    try {
+      await computeUserRank(update_fb.reviewing_user); // the author's reliability changed
+    } catch (e) {
+      console.error("Rank update failed:", e);
+    }
+
+    return "Vote registered";
+  } else {
+    await connection`
+      DELETE FROM bin_review_feedback
+      WHERE bin_review_id = ${revId} AND voter = ${feedback.voter}
+    `;
+    return "Unable to update not_useful counter"
   }
-  return "Vote registered";
-}
+} */
 
 // This function must "remove" a bin from the db if the latest reported state is
 export async function removeBin(bin_long: number, bin_lat: number, type: string) {
@@ -332,10 +390,10 @@ export async function getBinID(longitude: number, latitude: number, type: string
   return bin ?? null;
 }
 
-// Returns the bin revuew ID given specific parameters
-export async function getBinRevID(bin_long: number, bin_lat: number, bin_type:string, username: string, date_time: Date): Promise<number | null>{
+// Returns the bin review ID given specific parameters
+export async function getBinRevID(bin_long: number, bin_lat: number, bin_type:string, reviewing_user: string, date_time: Date): Promise<number | null>{
   const trashbin = await getBinID(bin_long, bin_lat, bin_type);
-  const user = await getUserID(username);
+  const user = await getUserID(reviewing_user);
   if (!trashbin || !user) return null;
 
   const [rev] = await connection`
@@ -738,7 +796,7 @@ export async function getUserRevID(reviewed_user: string, reviewing_user: string
 }
 
 export async function getLatestUserRevID(reviewed_user: string): Promise<number | null> {
-  const [revedUsr] = await getUserID(reviewed_user);
+  const revedUsr = await getUserID(reviewed_user);
 
   if (!revedUsr) return null;
 

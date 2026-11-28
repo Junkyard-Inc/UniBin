@@ -157,6 +157,14 @@ const schema = `
     FOREIGN KEY (reviewing_user) REFERENCES trash_user(user_id),
     FOREIGN KEY (reported_state) REFERENCES bin_state(state_id)
   );
+
+  CREATE TABLE IF NOT EXISTS bin_review_feedback(
+    bin_review_id  INT NOT NULL REFERENCES bin_review(bin_rev_id),
+    voter  INT NOT NULL REFERENCES trash_user(user_id),
+    useful  BOOLEAN NOT NULL, -- If true it means useful, if false means not useful
+
+    PRIMARY KEY(bin_review, voter) -- One vote per user per bin review
+  );
   `;
 console.log("Applying schema and filling with needed data...");
 await $`${compose} exec -T db psql -U ${DB_USER} -d ${DB_NAME} -v ON_ERROR_STOP=1 -c ${schema}`;
